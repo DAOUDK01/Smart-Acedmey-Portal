@@ -1,7 +1,47 @@
+# Dependencies
+node_modules/
+
+# Environment
 .env
 .env.*
 !.env.example
 **/.env
 **/.env.*
 !**/.env.example
-node_modules
+
+# Next.js
+.next/
+out/
+
+# NestJS / TypeScript build
+dist/
+build/
+
+# Logs & debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# Uploads & local data
+uploads/
+server/uploads/
+
+# Prisma
+*.db
+*.db-journal
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Misc
+*.tsbuildinfo
+.turbo/
