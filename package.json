@@ -1,0 +1,18 @@
+{
+  "name": "smart-academy-portal",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:client": "npm run dev -w @smart-academy/web",
+    "dev:server": "npm run start:dev -w @smart-academy/api",
+    "build": "npm run build --workspaces --if-present",
+    "build:client": "npm run build -w @smart-academy/web",
+    "build:server": "npm run build -w @smart-academy/api"
+  },
+  "devDependencies": {},
+  "dependencies": {}
+}

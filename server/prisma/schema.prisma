@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  TEACHER
+  STUDENT
+  GUARDIAN
+  EXPERT
+}
+
+enum QuizStatus {
+  PENDING
+  TEACHER_APPROVED
+  APPROVED
+  REJECTED
+  EDITED
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  LOGIN_VERIFICATION
+  PASSWORD_RESET
+}
+
+model User {
+  id           String   @id @default(cuid())
+  role         UserRole
+  name         String
+  email        String   @unique
+  passwordHash String?
+  phoneNumber  String?
+  avatarUrl    String?
+  isActive     Boolean  @default(true)
+  emailVerifiedAt DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  otpCodes           OtpCode[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model OtpCode {
+  id           String     @id @default(cuid())
+  userId       String
+  purpose      OtpPurpose
+  codeHash     String
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime   @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+}
+
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Course {
+  id          String   @id @default(cuid())
+  teacherId   String
+  code        String?  @unique
+  title       String
+  description String?
+  level       String?
+  isPublished Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Lecture {
+  id          String   @id @default(cuid())
+  courseId    String
+  videoUrl    String
+  transcript  String?
+  title       String
+  lectureOrder Int     @default(0)
+  durationMinutes Int?
+  videoProvider String?
+  isCheckpointLocked Boolean @default(true)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Checkpoint {
+  id            String   @id @default(cuid())
+  lectureId     String
+  title         String   @default("Checkpoint")
+  timestamp     Int
+  requiredQuizId String?
+  sortOrder     Int      @default(0)
+  unlockScore   Int      @default(70)
+  isBlocking    Boolean  @default(true)
+  isPublished   Boolean  @default(false)
+}
+
+model QuizQuestion {
+  id            String     @id @default(cuid())
+  lectureId     String?
+  sourceTopic   String?
+  sourceTranscript String?
+  question      String
+  options       Json
+  correctAnswer String
+  difficulty    String
+  topic         String?
+  questionType  String     @default("mcq")
+  answerExplanation String?
+  attemptLimit  Int        @default(3)
+  publishedAt   DateTime?
+  status        QuizStatus  @default(PENDING)
+  reviewedBy    String?
+  reviewComment String?
+  reviewedAt    DateTime?
+  aiPrompt      String?
+  timestamp     Int?       // Video timestamp in seconds where this quiz appears
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  quizAttempts  QuizAttempt[]
+}
+
+model QuizAttempt {
+  id          String   @id @default(cuid())
+  studentId   String
+  quizId      String
+  score       Float
+  responseTime Int
+  attemptNumber Int    @default(1)
+  selectedAnswers Json?
+  passed      Boolean  @default(false)
+  submittedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  quiz        QuizQuestion @relation(fields: [quizId], references: [id], onDelete: Cascade)
+}
+
+model StudentProgress {
+  id                 String   @id @default(cuid())
+  studentId          String   @unique
+  guardianName       String?
+  currentCourseId    String?
+  currentLectureId   String?
+  avgScore           Float    @default(0)
+  weakTopics         Json?
+  streakDays         Int      @default(0)
+  lastActivityAt     DateTime?
+  completedCheckpoints Int    @default(0)
+  lockedCheckpoints  Int      @default(0)
+  progressPercentage Float    @default(0)
+  completedLectures  Int      @default(0)
+  failedQuizzes      Int      @default(0)
+  updatedAt          DateTime @updatedAt
+}
