@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { PremiumCard } from "@/components/premium-card";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input, Select, Textarea } from "@/components/ui/input";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { formatDateTime } from "@/lib/portal-data";
 import { 
@@ -204,9 +207,7 @@ export function AdminConsole() {
     >
       <div className="flex flex-col gap-6">
         {status && (
-          <div className="rounded-2xl border border-accent-purple/20 bg-accent-purple/10 px-4 py-3 text-sm text-accent-purple">
-            {status}
-          </div>
+          <Alert variant="info">{status}</Alert>
         )}
 
         {activeTab === "overview" && (
@@ -239,13 +240,14 @@ export function AdminConsole() {
                         <p className="text-[10px] text-slate-500">{user.email}</p>
                       </div>
                     </div>
-                    <button 
+                    <Button
+                      size="sm"
+                      variant="solid"
                       onClick={() => updateApproval(user.id, true)}
                       disabled={isProcessing}
-                      className="rounded-xl bg-accent-purple px-4 py-2 text-xs font-bold uppercase tracking-wider text-white transition-all hover:bg-accent-purple/90"
                     >
                       Approve
-                    </button>
+                    </Button>
                   </div>
                 ))}
                 {pendingApprovals.length === 0 && (
@@ -285,10 +287,10 @@ export function AdminConsole() {
           <div className="space-y-6">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
-              <input 
-                type="text" 
+              <Input
+                type="text"
                 placeholder="Search students by name or email..."
-                className="w-full rounded-2xl border border-white/10 bg-white/5 py-4 pl-12 pr-4 text-white focus:border-accent-purple/50 focus:outline-none"
+                className="py-4 pl-12"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -321,9 +323,9 @@ export function AdminConsole() {
                           <p className="mt-1 text-lg font-bold text-accent-purple">{progress?.progressPercentage || 0}%</p>
                         </div>
                       </div>
-                      <button className="w-full mt-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-400 group-hover:text-white transition-all">
+                      <Button variant="ghost" size="sm" className="w-full mt-4 tracking-widest text-slate-400 group-hover:text-white">
                         Detailed Audit
-                      </button>
+                      </Button>
                     </div>
                   );
                 })}
@@ -354,7 +356,9 @@ export function AdminConsole() {
                     )}>
                       {course.isPublished ? "Published" : "Draft"}
                     </span>
-                    <button className="text-xs font-bold text-slate-500 hover:text-white">Edit</button>
+                    <Button variant="ghost" size="sm" className="text-slate-500 hover:text-white">
+                      Edit
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -368,19 +372,19 @@ export function AdminConsole() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Course Title</label>
-                  <input
+                  <Input
                     type="text"
                     required
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                    className="mt-2"
                     value={courseForm.title}
                     onChange={e => setCourseForm({...courseForm, title: e.target.value})}
                   />
                 </div>
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Course Code</label>
-                  <input
+                  <Input
                     type="text"
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                    className="mt-2"
                     value={courseForm.code}
                     onChange={e => setCourseForm({...courseForm, code: e.target.value})}
                   />
@@ -389,8 +393,8 @@ export function AdminConsole() {
 
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Assign Teacher</label>
-                <select
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                <Select
+                  className="mt-2"
                   value={courseForm.teacherId}
                   onChange={e => setCourseForm({...courseForm, teacherId: e.target.value})}
                 >
@@ -398,26 +402,22 @@ export function AdminConsole() {
                   {users.filter(u => u.role === "TEACHER" && u.isActive).map(t => (
                     <option key={t.id} value={t.id}>{t.name} ({t.email})</option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Description</label>
-                <textarea
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none h-32"
+                <Textarea
+                  className="mt-2 h-32"
                   value={courseForm.description}
                   onChange={e => setCourseForm({...courseForm, description: e.target.value})}
                 />
               </div>
 
               <div className="flex items-center gap-4">
-                <button
-                  type="submit"
-                  disabled={isProcessing}
-                  className="rounded-xl bg-accent-purple px-8 py-3 text-sm font-bold uppercase tracking-wider text-white transition-all hover:bg-accent-purple/90 disabled:opacity-50"
-                >
+                <Button type="submit" variant="solid" size="md" disabled={isProcessing}>
                   Create Course
-                </button>
+                </Button>
               </div>
             </form>
           </PremiumCard>
@@ -454,7 +454,9 @@ export function AdminConsole() {
               <div className="rounded-2xl border border-white/5 bg-white/5 p-6">
                 <h4 className="text-sm font-bold text-white">Maintenance Mode</h4>
                 <p className="text-xs text-slate-500 mt-1">Restrict platform access for scheduled updates.</p>
-                <button className="mt-4 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-bold text-white hover:bg-white/10 transition-all">Enable Mode</button>
+                <Button variant="secondary" size="sm" className="mt-4">
+                  Enable Mode
+                </Button>
               </div>
             </div>
           </PremiumCard>

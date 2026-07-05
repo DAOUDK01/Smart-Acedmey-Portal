@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { PremiumCard } from "@/components/premium-card";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { 
   CheckCircle2, 
@@ -186,11 +188,7 @@ export function ExpertConsole() {
       session={session ?? undefined}
     >
       <div className="flex flex-col gap-6">
-        {status && (
-          <div className="rounded-2xl border border-accent-purple/20 bg-accent-purple/10 px-4 py-3 text-sm text-accent-purple">
-            {status}
-          </div>
-        )}
+        {status && <Alert variant="info">{status}</Alert>}
 
         <PendingApprovalBanner roleLabel="expert" isApproved={isApproved} />
 
@@ -265,29 +263,32 @@ export function ExpertConsole() {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => setSelectedLectureId(lecture.id)}
-                        className="rounded-xl border border-white/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10"
                       >
                         <span className="flex items-center gap-2">
                           <Eye size={14} />
                           Audit
                         </span>
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="success"
+                        size="sm"
                         onClick={() => reviewLecture(lecture.id, "approve")}
                         disabled={actionId === lecture.id}
-                        className="rounded-xl bg-emerald-500/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50"
                       >
                         Approve
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
                         onClick={() => reviewLecture(lecture.id, "reject")}
                         disabled={actionId === lecture.id}
-                        className="rounded-xl bg-rose-500/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-rose-400 hover:bg-rose-500/20 disabled:opacity-50"
                       >
                         Reject
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )})}
@@ -340,20 +341,22 @@ export function ExpertConsole() {
                         Teacher Approved — Awaiting Expert
                       </span>
                       <div className="flex gap-2">
-                        <button 
+                        <Button
+                          variant="success"
+                          size="sm"
                           onClick={() => reviewQuiz(quiz.id, "approve")}
                           disabled={actionId === quiz.id}
-                          className="flex items-center gap-2 rounded-xl bg-emerald-500/10 px-4 py-2 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50"
                         >
                           <CheckCircle2 size={14} /> Approve
-                        </button>
-                        <button 
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
                           onClick={() => reviewQuiz(quiz.id, "reject")}
                           disabled={actionId === quiz.id}
-                          className="flex items-center gap-2 rounded-xl bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/20 disabled:opacity-50"
                         >
                           <XCircle size={14} /> Reject
-                        </button>
+                        </Button>
                       </div>
                     </div>
                     <p className="text-lg font-medium text-white">{quiz.question}</p>

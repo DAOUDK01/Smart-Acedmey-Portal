@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { PremiumCard } from "@/components/premium-card";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input, Select, Textarea } from "@/components/ui/input";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { cn } from "@/lib/utils";
 import {
@@ -634,14 +637,10 @@ export function TeacherConsole() {
     >
       <div className="flex flex-col gap-6">
         {statusMessage ? (
-          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">
-            {statusMessage}
-          </div>
+          <Alert variant="success">{statusMessage}</Alert>
         ) : null}
         {error ? (
-          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
-            {error}
-          </div>
+          <Alert variant="error">{error}</Alert>
         ) : null}
 
         <PendingApprovalBanner roleLabel="teacher" isApproved={isApproved} />
@@ -678,10 +677,10 @@ export function TeacherConsole() {
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                     Course Selection
                   </label>
-                  <select
+                  <Select
                     value={courseId}
                     onChange={(event) => setCourseId(event.target.value)}
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                    className="mt-2"
                   >
                     <option value="">Choose a course...</option>
                     {courses.map((course) => (
@@ -689,19 +688,19 @@ export function TeacherConsole() {
                         {course.title}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                     Lecture Title
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={lectureTitle}
                     onChange={(event) => setLectureTitle(event.target.value)}
                     placeholder="e.g. Introduction to Derivatives"
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                    className="mt-2"
                   />
                 </div>
 
@@ -710,63 +709,60 @@ export function TeacherConsole() {
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       Duration (minutes)
                     </label>
-                    <input
+                    <Input
                       type="number"
                       min={1}
                       value={durationMinutes}
                       onChange={(event) => setDurationMinutes(Number(event.target.value) || 10)}
-                      className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                      className="mt-2"
                     />
                   </div>
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
                       Segment Quizzes
                     </label>
-                    <input
+                    <Input
                       type="number"
                       min={1}
                       max={8}
                       value={questionCount}
                       onChange={(event) => setQuestionCount(Number(event.target.value) || 3)}
-                      className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                      className="mt-2"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setSourceMode("link")}
                     className={cn(
-                      "rounded-xl border py-3 text-sm font-medium transition-all",
-                      sourceMode === "link"
-                        ? "border-accent-purple bg-accent-purple/10 text-white"
-                        : "border-white/10 bg-white/5 text-slate-400",
+                      sourceMode === "link" &&
+                        "border-accent-purple bg-accent-purple/10 text-white",
                     )}
                   >
                     YouTube Link
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setSourceMode("upload")}
                     className={cn(
-                      "rounded-xl border py-3 text-sm font-medium transition-all",
-                      sourceMode === "upload"
-                        ? "border-accent-purple bg-accent-purple/10 text-white"
-                        : "border-white/10 bg-white/5 text-slate-400",
+                      sourceMode === "upload" &&
+                        "border-accent-purple bg-accent-purple/10 text-white",
                     )}
                   >
                     File Upload
-                  </button>
+                  </Button>
                 </div>
 
                 {sourceMode === "link" ? (
-                  <input
+                  <Input
                     type="url"
                     value={videoUrl}
                     onChange={(event) => setVideoUrl(event.target.value)}
                     placeholder="https://youtube.com/watch?v=..."
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                   />
                 ) : (
                   <div className="relative">
@@ -792,45 +788,51 @@ export function TeacherConsole() {
                 )}
 
                 <div className="flex gap-3">
-                  <button
+                  <Button
                     type="button"
+                    variant="secondary"
+                    size="sm"
+                    fullWidth
                     disabled={isProcessing}
                     onClick={handleTranscribe}
-                    className="flex-1 rounded-xl bg-white/10 py-3 text-xs font-bold uppercase tracking-wider text-white transition-all hover:bg-white/20 disabled:opacity-50"
                   >
                     {isProcessing ? "Processing..." : "Extract Transcript"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="solid"
+                    size="sm"
+                    fullWidth
                     disabled={isProcessing || !transcript}
                     onClick={handleGenerateQuiz}
-                    className="flex-1 rounded-xl bg-accent-purple py-3 text-xs font-bold uppercase tracking-wider text-white transition-all hover:bg-accent-purple/90 disabled:opacity-50"
                   >
                     {isProcessing ? "Generating..." : "Generate AI Quiz"}
-                  </button>
+                  </Button>
                 </div>
 
                 <div className="flex gap-3">
-                  <button
+                  <Button
                     type="button"
+                    size="lg"
+                    fullWidth
                     disabled={isProcessing || !lectureTitle}
                     onClick={handleSaveLecture}
-                    className="flex-1 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan py-4 text-sm font-bold uppercase tracking-wider text-white shadow-lg shadow-accent-purple/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                   >
                     {isProcessing
                       ? "Saving..."
                       : editingLectureId
                         ? "Update Lecture"
                         : "Save & Upload Lecture"}
-                  </button>
+                  </Button>
                   {editingLectureId ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="lg"
                       onClick={resetLectureForm}
-                      className="rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm font-bold uppercase tracking-wider text-white hover:bg-white/10"
                     >
                       Cancel
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </div>
@@ -860,12 +862,12 @@ export function TeacherConsole() {
                   <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     Transcript Preview
                   </h4>
-                  <textarea
+                  <Textarea
                     value={transcript}
                     onChange={(event) => setTranscript(event.target.value)}
                     rows={6}
                     placeholder="Extract or edit the lecture transcript used for segment quizzes."
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-ink-900 px-4 py-3 text-sm leading-relaxed text-slate-300 focus:border-accent-purple/50 focus:outline-none"
+                    className="mt-2 leading-relaxed text-slate-300"
                   />
                 </div>
 
@@ -884,7 +886,7 @@ export function TeacherConsole() {
                             <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                               Checkpoint Time (mm:ss)
                             </label>
-                            <input
+                            <Input
                               type="text"
                               value={formatTimestampInput(segment.timestamp)}
                               onChange={(event) => {
@@ -895,14 +897,14 @@ export function TeacherConsole() {
                                 };
                                 setLectureSegments(next);
                               }}
-                              className="mt-2 w-full rounded-xl border border-white/10 bg-ink-900 px-3 py-2 text-sm text-white"
+                              className="mt-2 px-3 py-2"
                             />
                           </div>
                           <div>
                             <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                               Difficulty
                             </label>
-                            <select
+                            <Select
                               value={segment.difficulty}
                               onChange={(event) => {
                                 const next = [...lectureSegments];
@@ -912,12 +914,12 @@ export function TeacherConsole() {
                                 };
                                 setLectureSegments(next);
                               }}
-                              className="mt-2 w-full rounded-xl border border-white/10 bg-ink-900 px-3 py-2 text-sm text-white"
+                              className="mt-2 px-3 py-2"
                             >
                               <option value="easy">Easy</option>
                               <option value="medium">Medium</option>
                               <option value="hard">Hard</option>
-                            </select>
+                            </Select>
                           </div>
                           <div>
                             <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
@@ -965,20 +967,24 @@ export function TeacherConsole() {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="p-2"
                         onClick={() => handleEditLecture(lecture)}
-                        className="rounded-lg bg-white/5 p-2 text-slate-400 hover:bg-white/10 hover:text-white"
                       >
                         <Edit size={18} />
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="p-2 hover:text-rose-400"
                         onClick={() => handleDeleteLecture(lecture.id)}
-                        className="rounded-lg bg-white/5 p-2 text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
                       >
                         <Trash2 size={18} />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -1022,18 +1028,19 @@ export function TeacherConsole() {
                           {course.code || "No Course Code"}
                         </p>
                       </div>
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
                         onClick={() =>
                           setExpandedCourseId(isExpanded ? null : course.id)
                         }
-                        className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10"
                       >
                         <span className="flex items-center gap-2">
                           {isExpanded ? "Hide" : "View"} Details
                           {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </span>
-                      </button>
+                      </Button>
                     </div>
 
                     <div className="mt-6 flex items-center justify-between text-xs font-bold uppercase tracking-widest text-slate-500">
@@ -1067,13 +1074,15 @@ export function TeacherConsole() {
                                   </span>
                                 </div>
                               </div>
-                              <button
+                              <Button
                                 type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="p-2"
                                 onClick={() => handleEditLecture(lecture)}
-                                className="rounded-lg bg-white/5 p-2 text-slate-400 hover:bg-white/10 hover:text-white"
                               >
                                 <Edit size={16} />
-                              </button>
+                              </Button>
                             </div>
                             <p className="mt-3 line-clamp-3 text-sm text-slate-300">
                               {lecture.transcript || "Transcript not generated yet."}
@@ -1105,32 +1114,30 @@ export function TeacherConsole() {
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
                   Filter by Difficulty
                 </label>
-                <select
+                <Select
                   value={quizFilterDifficulty}
                   onChange={(e) => setQuizFilterDifficulty(e.target.value as any)}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                 >
                   <option value="all">All Difficulties</option>
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
-                </select>
+                </Select>
               </div>
 
               <div className="flex-1 min-w-[200px]">
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
                   Filter by Course
                 </label>
-                <select
+                <Select
                   value={quizFilterCourse}
                   onChange={(e) => setQuizFilterCourse(e.target.value)}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                 >
                   <option value="all">All Courses</option>
                   {courses.map((course) => (
                     <option key={course.id} value={course.id}>{course.title}</option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
 
@@ -1163,20 +1170,22 @@ export function TeacherConsole() {
                         ) : null}
                       </div>
                       <div className="flex gap-2">
-                        <button
+                        <Button
                           type="button"
+                          variant="success"
+                          size="sm"
                           onClick={() => handleReview(quiz.id, "approve")}
-                          className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20"
                         >
                           Approve
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           type="button"
+                          variant="danger"
+                          size="sm"
                           onClick={() => handleReview(quiz.id, "reject")}
-                          className="rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-400 hover:bg-rose-500/20"
                         >
                           Reject
-                        </button>
+                        </Button>
                       </div>
                     </div>
                     <p className="text-lg font-medium text-white">{quiz.question}</p>
@@ -1214,7 +1223,7 @@ export function TeacherConsole() {
                 description="Create teacher-authored mock questions and send them through the same review flow."
               >
                 <div className="grid gap-4 md:grid-cols-2">
-                  <select
+                  <Select
                     value={manualMockForm.courseId}
                     onChange={(event) =>
                       setManualMockForm((current) => ({
@@ -1222,7 +1231,6 @@ export function TeacherConsole() {
                         courseId: event.target.value,
                       }))
                     }
-                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                   >
                     <option value="">Choose course...</option>
                     {courses.map((course) => (
@@ -1230,8 +1238,8 @@ export function TeacherConsole() {
                         {course.title}
                       </option>
                     ))}
-                  </select>
-                  <select
+                  </Select>
+                  <Select
                     value={manualMockForm.difficulty}
                     onChange={(event) =>
                       setManualMockForm((current) => ({
@@ -1239,14 +1247,13 @@ export function TeacherConsole() {
                         difficulty: event.target.value as ManualMockForm["difficulty"],
                       }))
                     }
-                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                   >
                     <option value="easy">Easy</option>
                     <option value="medium">Medium</option>
                     <option value="hard">Hard</option>
-                  </select>
+                  </Select>
                 </div>
-                <input
+                <Input
                   value={manualMockForm.topic}
                   onChange={(event) =>
                     setManualMockForm((current) => ({
@@ -1255,9 +1262,9 @@ export function TeacherConsole() {
                     }))
                   }
                   placeholder="Topic or subject"
-                  className="mt-4 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                  className="mt-4"
                 />
-                <textarea
+                <Textarea
                   value={manualMockForm.question}
                   onChange={(event) =>
                     setManualMockForm((current) => ({
@@ -1266,9 +1273,9 @@ export function TeacherConsole() {
                     }))
                   }
                   placeholder="Write the mock exam question"
-                  className="mt-4 h-32 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                  className="mt-4 h-32"
                 />
-                <textarea
+                <Textarea
                   value={manualMockForm.options}
                   onChange={(event) =>
                     setManualMockForm((current) => ({
@@ -1277,9 +1284,9 @@ export function TeacherConsole() {
                     }))
                   }
                   placeholder={"Options, one per line\nOption A\nOption B\nOption C"}
-                  className="mt-4 h-32 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                  className="mt-4 h-32"
                 />
-                <input
+                <Input
                   value={manualMockForm.correctAnswer}
                   onChange={(event) =>
                     setManualMockForm((current) => ({
@@ -1288,16 +1295,16 @@ export function TeacherConsole() {
                     }))
                   }
                   placeholder="Correct answer exactly as written above"
-                  className="mt-4 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                  className="mt-4"
                 />
-                <button
+                <Button
                   type="button"
+                  className="mt-4"
                   onClick={handleCreateManualMock}
                   disabled={isProcessing}
-                  className="mt-4 rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan px-6 py-3 text-sm font-bold uppercase tracking-wider text-white disabled:opacity-50"
                 >
                   Save Manual Mock Question
-                </button>
+                </Button>
               </PremiumCard>
 
               <PremiumCard
@@ -1306,10 +1313,9 @@ export function TeacherConsole() {
                 description="Use the lecture transcripts already in the course to generate a mock exam set."
               >
                 <div className="grid gap-4 md:grid-cols-2">
-                  <select
+                  <Select
                     value={aiMockCourseId}
                     onChange={(event) => setAiMockCourseId(event.target.value)}
-                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                   >
                     <option value="">Choose course...</option>
                     {courses.map((course) => (
@@ -1317,8 +1323,8 @@ export function TeacherConsole() {
                         {course.title}
                       </option>
                     ))}
-                  </select>
-                  <input
+                  </Select>
+                  <Input
                     type="number"
                     min={3}
                     max={10}
@@ -1326,23 +1332,23 @@ export function TeacherConsole() {
                     onChange={(event) =>
                       setAiMockQuestionCount(Number(event.target.value))
                     }
-                    className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                   />
                 </div>
-                <input
+                <Input
                   value={aiMockTopic}
                   onChange={(event) => setAiMockTopic(event.target.value)}
                   placeholder="Optional custom exam topic"
-                  className="mt-4 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                  className="mt-4"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="solid"
+                  className="mt-4"
                   onClick={handleCreateAiMock}
                   disabled={isProcessing}
-                  className="mt-4 rounded-xl bg-accent-purple px-6 py-3 text-sm font-bold uppercase tracking-wider text-white disabled:opacity-50"
                 >
                   Generate AI Mock Exam
-                </button>
+                </Button>
               </PremiumCard>
             </div>
 
@@ -1384,12 +1390,12 @@ export function TeacherConsole() {
           <div className="space-y-6">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
-              <input
+              <Input
                 type="text"
                 placeholder="Search students by name or email..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-white/5 py-4 pl-12 pr-4 text-white focus:border-accent-purple/50 focus:outline-none"
+                className="py-4 pl-12"
               />
             </div>
 
@@ -1442,14 +1448,17 @@ export function TeacherConsole() {
                           </p>
                         </div>
                       </div>
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
+                        fullWidth
+                        className="mt-4 tracking-widest"
                         onClick={() => setSelectedStudentId(student.id)}
-                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2 text-xs font-bold uppercase tracking-widest text-white hover:bg-white/10"
                       >
                         <Eye size={14} />
                         View Detailed Report
-                      </button>
+                      </Button>
                     </div>
                   );
                 })}

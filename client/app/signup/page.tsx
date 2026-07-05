@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { PremiumCard } from "@/components/premium-card";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input, Select } from "@/components/ui/input";
+import { Panel } from "@/components/ui/panel";
 import {
   getDashboardPath,
   savePortalSession,
@@ -269,13 +273,13 @@ export default function SignupPage() {
             <PremiumCard
               title="Scalable stack"
               description="Next.js, NestJS, Prisma, and PostgreSQL."
-              accent="from-violet-500/20 to-transparent"
+              accent="from-accent-purple/20 to-transparent"
             />
           </div>
         </div>
       </section>
-      <section className="flex items-center justify-center bg-[#0B1020] px-6 py-12">
-        <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-soft backdrop-blur-xl">
+      <section className="flex items-center justify-center bg-ink-950 px-6 py-12">
+        <Panel className="w-full max-w-md" glass={false}>
           <div>
             <h2 className="text-3xl font-semibold text-white">
               Create account
@@ -289,53 +293,45 @@ export default function SignupPage() {
             onSubmit={(event) => void handleSubmit(event)}
           >
             {googlePayload ? (
-              <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4">
-                <div className="flex items-center gap-3">
-                  {googlePayload.picture ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={googlePayload.picture}
-                      alt="Google profile"
-                      className="h-12 w-12 rounded-full border border-white/10 object-cover"
-                    />
-                  ) : null}
-                  <div>
-                    <p className="text-sm font-semibold text-white">
-                      Google profile loaded
-                    </p>
-                    <p className="text-xs text-slate-300">
-                      {googlePayload.email}
-                    </p>
-                  </div>
+              <Alert variant="info" className="flex items-center gap-3">
+                {googlePayload.picture ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={googlePayload.picture}
+                    alt="Google profile"
+                    className="h-12 w-12 rounded-full border border-white/10 object-cover"
+                  />
+                ) : null}
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    Google profile loaded
+                  </p>
+                  <p className="text-xs text-slate-300">{googlePayload.email}</p>
                 </div>
-              </div>
+              </Alert>
             ) : null}
-            <input
-              className="w-full rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+            <Input
               placeholder="Full name"
               type="text"
               autoComplete="name"
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
-            <input
-              className="w-full rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+            <Input
               placeholder="Email address"
               type="email"
               autoComplete="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
             />
-            <input
-              className="w-full rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+            <Input
               placeholder="Password"
               type="password"
               autoComplete="new-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
-            <select
-              className="w-full rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-white outline-none transition focus:border-cyan-300/50"
+            <Select
               value={role}
               onChange={(event) => setRole(event.target.value as PortalRole)}
             >
@@ -344,35 +340,32 @@ export default function SignupPage() {
                   {option.label}
                 </option>
               ))}
-            </select>
-            <button
-              className="w-full rounded-2xl bg-gradient-to-r from-violet-500 to-cyan-400 px-4 py-3 font-semibold text-white shadow-glow transition hover:scale-[1.01]"
-              type="submit"
-              disabled={isSubmitting}
-            >
+            </Select>
+            <Button type="submit" fullWidth disabled={isSubmitting}>
               {isSubmitting ? "Creating account..." : "Create account"}
-            </button>
+            </Button>
           </form>
           {status ? (
-            <p className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+            <Alert variant="neutral" className="mt-4">
               {status}
-            </p>
+            </Alert>
           ) : null}
           {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
             <div className="mt-6" id="g_id_signup" />
           ) : (
             <div className="mt-6">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                fullWidth
                 onClick={() =>
                   setStatus(
-                    "Google sign-up not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in apps/web/.env.local and restart the dev server.",
+                    "Google sign-up not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in client/.env.local and restart the dev server.",
                   )
                 }
-                className="w-full rounded-2xl border border-white/10 bg-[#111827] px-4 py-3 text-white transition"
               >
                 Sign up with Google (configure first)
-              </button>
+              </Button>
             </div>
           )}
           <p className="mt-3 text-xs text-slate-400">
@@ -384,12 +377,12 @@ export default function SignupPage() {
             Already have an account?{" "}
             <Link
               href="/login"
-              className="text-white transition hover:text-cyan-300"
+              className="text-white transition hover:text-accent-cyan"
             >
               Sign in
             </Link>
           </p>
-        </div>
+        </Panel>
       </section>
     </div>
   );

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { aiWorkflow, featureCards, stats } from "@/lib/data";
 import { PremiumCard } from "@/components/premium-card";
+import { buttonVariants } from "@/components/ui/button";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { cn } from "@/lib/utils";
 
 export default function HomePage() {
   return (
@@ -8,22 +11,23 @@ export default function HomePage() {
       <div className="mx-auto max-w-7xl px-4 py-8 lg:px-8">
         <header className="surface-panel motion-fade flex items-center justify-between rounded-full px-5 py-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-sky-200/80">
-              Smart Academy Portal
-            </p>
+            <Eyebrow>Smart Academy Portal</Eyebrow>
             <p className="text-sm text-slate-400">
               Built for people who teach and learn
             </p>
           </div>
           <div className="hidden gap-2 md:flex">
             <Link
-              className="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/10"
+              className={buttonVariants({ variant: "ghost", size: "pill" })}
               href="/login"
             >
               Sign in
             </Link>
             <Link
-              className="rounded-full border border-sky-300/30 bg-sky-400/10 px-4 py-2 text-sm text-sky-100 transition hover:bg-sky-400/20"
+              className={cn(
+                buttonVariants({ variant: "primary", size: "pill" }),
+                "shadow-none",
+              )}
               href="/signup"
             >
               Create account
@@ -33,7 +37,7 @@ export default function HomePage() {
 
         <section className="motion-rise grid gap-8 py-16 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
           <div>
-            <span className="inline-flex rounded-full border border-sky-300/20 bg-sky-400/10 px-4 py-2 text-xs uppercase tracking-[0.3em] text-sky-100">
+            <span className="inline-flex rounded-full border border-accent-purple/20 bg-accent-purple/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">
               Checkpoint-driven learning journey
             </span>
             <h1 className="mt-6 max-w-3xl text-5xl font-semibold leading-tight text-white md:text-7xl">
@@ -46,13 +50,13 @@ export default function HomePage() {
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
               <Link
-                className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-[#0B1020] transition hover:scale-[1.02]"
+                className={buttonVariants({ variant: "primary", size: "pill" })}
                 href="/login"
               >
                 Sign in
               </Link>
               <Link
-                className="rounded-full border border-white/15 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition hover:border-cyan-300/40 hover:bg-white/10"
+                className={buttonVariants({ variant: "outline", size: "pill" })}
                 href="/signup"
               >
                 Create account
@@ -78,20 +82,20 @@ export default function HomePage() {
             eyebrow="Portal preview"
             title="A calmer, clearer control center"
             description="Track progress, course coverage, and quiz quality with concise panels designed for daily use."
-            accent="from-sky-500/30 to-teal-500/20"
+            accent="from-accent-purple/30 to-accent-cyan/20"
           >
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-white/10 bg-[#121826] p-4">
+                <div className="rounded-2xl border border-white/10 bg-ink-900 p-4">
                   <p className="text-xs text-slate-400">Learner engagement</p>
                   <p className="mt-2 text-2xl font-semibold text-white">96%</p>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-[#121826] p-4">
+                <div className="rounded-2xl border border-white/10 bg-ink-900 p-4">
                   <p className="text-xs text-slate-400">Quiz accuracy</p>
                   <p className="mt-2 text-2xl font-semibold text-white">87%</p>
                 </div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-[#121826] p-4">
+              <div className="rounded-2xl border border-white/10 bg-ink-900 p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-sky-200/80">
                   Learning workflow
                 </p>

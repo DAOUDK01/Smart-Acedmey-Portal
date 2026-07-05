@@ -6,6 +6,9 @@ import { PremiumCard } from "@/components/premium-card";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { formatDateTime } from "@/lib/portal-data";
 import { PendingApprovalBanner } from "@/components/pending-approval-banner";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input, Select } from "@/components/ui/input";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
@@ -222,9 +225,9 @@ export default function GuardianPage() {
       onTabChange={setActiveTab}
     >
       {status ? (
-        <div className="mb-6 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+        <Alert variant="error" className="mb-6">
           {status}
-        </div>
+        </Alert>
       ) : null}
 
       <PendingApprovalBanner roleLabel="guardian" isApproved={isApproved} />
@@ -232,19 +235,15 @@ export default function GuardianPage() {
       {/* Child Search Section */}
       <section className="mb-6">
         <form onSubmit={handleSearch} className="flex gap-3 max-w-md">
-          <input
-            className="flex-1 rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/50"
+          <Input
+            className="flex-1"
             placeholder="Enter Student ID (e.g. student-1)"
             value={searchId}
             onChange={(e) => setSearchId(e.target.value)}
           />
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-2xl bg-gradient-to-r from-violet-500 to-cyan-400 px-5 py-3 text-sm font-semibold text-white shadow-glow transition hover:opacity-90 disabled:opacity-50"
-          >
+          <Button type="submit" disabled={loading}>
             {loading ? "Searching..." : "Track Child"}
-          </button>
+          </Button>
         </form>
       </section>
 
@@ -257,7 +256,7 @@ export default function GuardianPage() {
                 eyebrow="Student ID"
                 title={studentProgress.studentId}
                 description="Currently Enrolled Portal Student"
-                accent="from-violet-500/20 to-transparent"
+                accent="from-accent-purple/20 to-transparent"
               >
                 <div className="mt-3 text-sm text-slate-300">
                   <p>
@@ -283,7 +282,7 @@ export default function GuardianPage() {
               >
                 <div className="mt-3 w-full bg-white/5 rounded-full h-2">
                   <div
-                    className="bg-gradient-to-r from-violet-500 to-cyan-400 h-2 rounded-full"
+                    className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
                     style={{
                       width: `${Math.min(100, studentProgress.avgScore)}%`,
                     }}
@@ -396,7 +395,7 @@ export default function GuardianPage() {
                   {recommendations.map((rec, i) => (
                     <div
                       key={i}
-                      className="rounded-2xl border border-white/10 bg-[#121826] p-3 text-xs"
+                      className="rounded-2xl border border-white/10 bg-ink-900 p-3 text-xs"
                     >
                       <div className="flex justify-between items-start">
                         <span className="font-semibold text-white">
@@ -425,10 +424,9 @@ export default function GuardianPage() {
           >
             <div className="grid gap-6 lg:grid-cols-[0.7fr_1.3fr]">
               <div className="space-y-4">
-                <select
+                <Select
                   value={selectedSubject}
                   onChange={(e) => setSelectedSubject(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-cyan-300/50 focus:outline-none"
                 >
                   <option value="all">All Subjects</option>
                   {subjectBreakdown.map((item) => (
@@ -436,7 +434,7 @@ export default function GuardianPage() {
                       {item.subject}
                     </option>
                   ))}
-                </select>
+                </Select>
 
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
                   <div className="rounded-2xl bg-white/5 p-4">
@@ -462,7 +460,7 @@ export default function GuardianPage() {
                 {filteredSubjects.map((item) => (
                   <div
                     key={item.subject}
-                    className="rounded-2xl border border-white/10 bg-[#121826] p-4"
+                    className="rounded-2xl border border-white/10 bg-ink-900 p-4"
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
@@ -491,7 +489,7 @@ export default function GuardianPage() {
                         </div>
                         <div className="h-2 rounded-full bg-white/5">
                           <div
-                            className="h-2 rounded-full bg-gradient-to-r from-violet-500 to-cyan-400"
+                            className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
                             style={{ width: `${item.score}%` }}
                           />
                         </div>
@@ -530,7 +528,7 @@ export default function GuardianPage() {
                   Rapid answering was detected in recent quiz attempts. Consider supervising the next study session.
                 </div>
               ) : null}
-              <div className="rounded-2xl border border-white/10 bg-[#121826] p-4">
+              <div className="rounded-2xl border border-white/10 bg-ink-900 p-4">
                 <h4 className="text-sm font-semibold text-white">
                   Recommended Parent Actions
                 </h4>

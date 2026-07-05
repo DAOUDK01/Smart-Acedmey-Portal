@@ -5,6 +5,8 @@ import { DashboardShell } from "./dashboard-shell";
 import { PremiumCard } from "./premium-card";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { PendingApprovalBanner } from "@/components/pending-approval-banner";
+import { Button } from "@/components/ui/button";
+import { Input, Select } from "@/components/ui/input";
 import {
   Bot,
   Clock,
@@ -29,7 +31,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { LecturePlayer } from "@/components/lecture-player";
+import { LecturePlayer, type LectureQuiz } from "@/components/lecture-player";
 import { StudentDashboard } from "./student/student-dashboard";
 import { MockExams } from "./student/mock-exams";
 
@@ -182,7 +184,7 @@ export function StudentConsole() {
       .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   }, [quizzes, currentLecture]);
 
-  const handleSubmitQuizAnswer = async (quiz: Quiz, answer: string) => {
+  const handleSubmitQuizAnswer = async (quiz: LectureQuiz, answer: string) => {
     const response = await fetch(`${API_BASE_URL}/api/teacher/quizzes/${quiz.id}/attempt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -305,6 +307,7 @@ export function StudentConsole() {
                     setAnsweredQuizzes(new Set());
                   }}
                   className="rounded-full bg-white/5 p-2 text-slate-400 hover:bg-white/10 hover:text-white transition-all"
+                  aria-label="Close lecture player"
                 >
                   <X size={20} />
                 </button>
@@ -409,15 +412,17 @@ export function StudentConsole() {
                               </div>
                             </div>
                           </div>
-                          <button
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="tracking-wider"
                             onClick={() => {
                               setCurrentLecture(lecture);
                               setAnsweredQuizzes(new Set());
                             }}
-                            className="rounded-xl border border-white/10 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/10"
                           >
                             {currentLecture?.id === lecture.id ? "Playing" : "Watch Lecture"}
-                          </button>
+                          </Button>
                         </div>
                       );
                     })}
@@ -448,10 +453,9 @@ export function StudentConsole() {
             >
               <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                 <div className="space-y-4">
-                  <select
+                  <Select
                     value={selectedSubject}
                     onChange={(e) => setSelectedSubject(e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
                   >
                     <option value="all">All Subjects</option>
                     {subjectReports.map((report) => (
@@ -459,7 +463,7 @@ export function StudentConsole() {
                         {report.subject}
                       </option>
                     ))}
-                  </select>
+                  </Select>
 
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
                     <div className="rounded-2xl bg-white/5 p-4">
@@ -681,20 +685,22 @@ export function StudentConsole() {
 
               <div className="p-4 bg-white/5 border-t border-white/5">
                 <div className="relative flex items-center">
-                  <input
+                  <Input
                     type="text"
                     placeholder="Type your question here..."
-                    className="w-full rounded-2xl border border-white/10 bg-ink-950 py-4 pl-4 pr-14 text-sm text-white focus:border-accent-purple/50 focus:outline-none"
+                    className="py-4 pl-4 pr-14"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
                   />
-                  <button
+                  <Button
                     onClick={handleSendMessage}
-                    className="absolute right-2 p-2 rounded-xl bg-accent-purple text-white hover:bg-accent-purple/90 transition-all"
+                    variant="solid"
+                    size="sm"
+                    className="absolute right-2 p-2"
                   >
                     <Send size={18} />
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>

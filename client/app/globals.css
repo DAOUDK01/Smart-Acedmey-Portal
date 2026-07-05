@@ -4,15 +4,15 @@
 
 :root {
   color-scheme: dark;
-  --bg-base: #0f1728;
-  --bg-elevated: #162033;
+  --bg-base: #0b1020;
+  --bg-elevated: #121826;
   --surface: rgba(255, 255, 255, 0.05);
   --surface-strong: rgba(255, 255, 255, 0.09);
   --text-main: #e8eef8;
-  --text-muted: #aab6cc;
-  --brand-primary: #5eb5ff;
-  --brand-secondary: #79d2c8;
-  --brand-warm: #f3b267;
+  --text-muted: #94a3b8;
+  --brand-primary: #7c5cff;
+  --brand-secondary: #00d1ff;
+  --brand-warm: #ffb020;
 }
 
 html,
@@ -25,17 +25,17 @@ body {
   background:
     radial-gradient(
       circle at 10% 12%,
-      rgba(94, 181, 255, 0.14),
+      rgba(124, 92, 255, 0.14),
       transparent 30%
     ),
     radial-gradient(
       circle at 88% 8%,
-      rgba(121, 210, 200, 0.16),
+      rgba(0, 209, 255, 0.12),
       transparent 26%
     ),
     radial-gradient(
       circle at 50% 100%,
-      rgba(243, 178, 103, 0.08),
+      rgba(255, 176, 32, 0.06),
       transparent 40%
     ),
     var(--bg-base);
@@ -64,7 +64,7 @@ h4 {
 }
 
 ::selection {
-  background: rgba(94, 181, 255, 0.35);
+  background: rgba(124, 92, 255, 0.35);
 }
 
 .motion-rise {
@@ -102,7 +102,6 @@ h4 {
   to { opacity: 1; }
 }
 
-/* Premium Select Styling */
 select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7' /%3E%3C/svg%3E");
@@ -113,7 +112,7 @@ select {
 }
 
 select option {
-  background-color: #0f172a;
+  background-color: #0b1020;
   color: #fff;
   padding: 1rem;
 }

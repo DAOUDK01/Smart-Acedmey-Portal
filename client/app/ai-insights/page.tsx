@@ -36,7 +36,7 @@ export default function AiInsightsPage() {
             ].map((item, index) => (
               <div
                 key={item}
-                className="rounded-2xl border border-white/10 bg-[#121826] p-3 text-center"
+                className="rounded-2xl border border-white/10 bg-ink-900 p-3 text-center"
                 style={{ opacity: 0.55 + (index % 4) * 0.1 }}
               >
                 <p className="text-sm text-white">{item}</p>
@@ -67,7 +67,7 @@ export default function AiInsightsPage() {
             {Array.from({ length: 35 }).map((_, index) => (
               <div
                 key={index}
-                className="aspect-square rounded-lg bg-gradient-to-br from-violet-500/30 to-cyan-400/10"
+                className="aspect-square rounded-lg bg-gradient-to-br from-accent-purple/30 to-accent-cyan/10"
                 style={{ opacity: 0.25 + (index % 7) * 0.1 }}
               />
             ))}
@@ -83,7 +83,7 @@ export default function AiInsightsPage() {
               (label, index) => (
                 <div
                   key={label}
-                  className="rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-sm text-slate-300"
+                  className="rounded-2xl border border-white/10 bg-ink-900 px-4 py-3 text-sm text-slate-300"
                 >
                   {label} - {100 - index * 18}% of cohort
                 </div>
@@ -96,7 +96,7 @@ export default function AiInsightsPage() {
           title="AI readiness"
           description="This phase stays simple now and leaves room for advanced analytics later."
         >
-          <div className="rounded-[24px] border border-white/10 bg-[#121826] p-5 text-sm text-slate-300">
+          <div className="rounded-[24px] border border-white/10 bg-ink-900 p-5 text-sm text-slate-300">
             <p>Current phase: rule-based intelligence.</p>
             <p className="mt-2">
               Future phase: clustering, recommendations, and anomaly detection.

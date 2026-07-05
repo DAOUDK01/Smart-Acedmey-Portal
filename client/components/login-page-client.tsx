@@ -2,6 +2,10 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { PremiumCard } from "@/components/premium-card";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Panel } from "@/components/ui/panel";
 import {
   getDashboardPath,
   savePortalSession,
@@ -219,7 +223,7 @@ export function LoginPageClient() {
             <PremiumCard
               title="Guided progress"
               description="Checkpoint-based flow that helps you stay on track."
-              accent="from-sky-500/20 to-transparent"
+              accent="from-accent-purple/20 to-transparent"
             />
             <PremiumCard
               title="Trusted access"
@@ -230,7 +234,7 @@ export function LoginPageClient() {
         </div>
       </section>
       <section className="motion-fade flex items-center justify-center px-6 py-12">
-        <div className="surface-panel w-full max-w-md rounded-[32px] p-8">
+        <Panel className="w-full max-w-md">
           <div>
             <h2 className="text-3xl font-semibold text-white">Sign in</h2>
             <p className="mt-2 text-sm text-slate-400">
@@ -241,50 +245,45 @@ export function LoginPageClient() {
             className="mt-8 space-y-4"
             onSubmit={(event) => void handleSubmit(event)}
           >
-            <input
-              className="w-full rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+            <Input
               placeholder="Email address"
               type="email"
               autoComplete="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
             />
-            <input
-              className="w-full rounded-2xl border border-white/10 bg-[#121826] px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+            <Input
               placeholder="Password"
               type="password"
               autoComplete="current-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
-            <button
-              className="w-full rounded-2xl bg-gradient-to-r from-sky-500 to-teal-400 px-4 py-3 font-semibold text-white shadow-soft transition hover:translate-y-[-1px]"
-              type="submit"
-              disabled={isSubmitting}
-            >
+            <Button type="submit" fullWidth disabled={isSubmitting}>
               {isSubmitting ? "Signing in..." : "Sign in"}
-            </button>
+            </Button>
           </form>
           {status ? (
-            <p className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+            <Alert variant="neutral" className="mt-4">
               {status}
-            </p>
+            </Alert>
           ) : null}
           {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
             <div className="mt-6" id="g_id_signin" />
           ) : (
             <div className="mt-6">
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                fullWidth
                 onClick={() =>
                   setStatus(
-                    "Google sign-in not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in apps/web/.env.local and restart the dev server.",
+                    "Google sign-in not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in client/.env.local and restart the dev server.",
                   )
                 }
-                className="w-full rounded-2xl border border-white/10 bg-[#1f2937] px-4 py-3 text-white transition"
               >
                 Sign in with Google (configure first)
-              </button>
+              </Button>
             </div>
           )}
           <div className="mt-6 flex items-center justify-center text-sm text-slate-400">
@@ -292,7 +291,7 @@ export function LoginPageClient() {
               Don't have an account? Create one
             </a>
           </div>
-        </div>
+        </Panel>
       </section>
     </div>
   );

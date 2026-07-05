@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
+import { Eyebrow } from "@/components/ui/eyebrow";
 
 export function PremiumCard({
   eyebrow,
   title,
   description,
   children,
-  accent = "from-violet-500/30 to-cyan-400/20",
+  accent = "from-accent-purple/30 to-accent-cyan/20",
 }: {
   eyebrow?: string;
   title: string;
@@ -19,11 +20,7 @@ export function PremiumCard({
         className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accent} opacity-35 transition-opacity group-hover:opacity-55`}
       />
       <div className="relative">
-        {eyebrow ? (
-          <p className="text-xs uppercase tracking-[0.28em] text-sky-200/80">
-            {eyebrow}
-          </p>
-        ) : null}
+        {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
         <h3 className="mt-2 text-xl font-semibold text-slate-50">{title}</h3>
         {description ? (
           <p className="mt-2 text-sm leading-6 text-slate-300/95">

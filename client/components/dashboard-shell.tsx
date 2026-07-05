@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Sidebar } from "./sidebar";
-import { Bell, Search, User as UserIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Bell, Search } from "lucide-react";
+import { Eyebrow } from "@/components/ui/eyebrow";
+import { Input } from "@/components/ui/input";
 
 const roleLabels = {
   admin: "Admin",
@@ -46,10 +47,10 @@ export function DashboardShell({
           <div className="flex items-center gap-8">
             <div className="relative hidden lg:block">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-              <input
+              <Input
                 type="text"
                 placeholder="Search resources, courses..."
-                className="h-10 w-80 rounded-xl border border-white/10 bg-white/5 pl-10 pr-4 text-sm transition-all focus:border-accent-purple/50 focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+                className="h-10 w-80 pl-10"
               />
             </div>
           </div>
@@ -82,9 +83,7 @@ export function DashboardShell({
         <main className="flex-1 overflow-y-auto bg-ink-950 p-8">
           <div className="mx-auto max-w-6xl">
             <header className="mb-10">
-              <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">
-                {roleLabels[role]} Dashboard
-              </p>
+              <Eyebrow>{roleLabels[role]} Dashboard</Eyebrow>
               <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h1 className="text-4xl font-bold tracking-tight text-white">

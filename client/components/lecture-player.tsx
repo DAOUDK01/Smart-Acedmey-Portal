@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Check, FileQuestion, Maximize, Minimize, Pause, Play, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 export type LectureQuiz = {
   id: string;
@@ -452,13 +453,15 @@ export function LecturePlayer({
                     </button>
                   ))}
                 </div>
-                <button
+                <Button
                   onClick={handleSubmitAnswer}
                   disabled={!selectedAnswer}
-                  className="mt-6 w-full rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan py-3 text-sm font-bold uppercase tracking-widest text-white disabled:opacity-50"
+                  fullWidth
+                  size="lg"
+                  className="mt-6"
                 >
                   Submit Answer
-                </button>
+                </Button>
               </>
             ) : (
               <>
@@ -490,12 +493,9 @@ export function LecturePlayer({
                   </div>
                 </div>
                 <p className="mb-6 text-slate-300">{quizResult.explanation}</p>
-                <button
-                  onClick={handleContinueWatching}
-                  className="w-full rounded-xl bg-gradient-to-r from-accent-purple to-accent-cyan py-3 text-sm font-bold uppercase tracking-widest text-white"
-                >
+                <Button onClick={handleContinueWatching} fullWidth size="lg">
                   Continue Watching
-                </button>
+                </Button>
               </>
             )}
           </div>
