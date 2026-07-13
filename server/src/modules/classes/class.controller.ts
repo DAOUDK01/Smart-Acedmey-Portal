@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { ClassService } from "./class.service";
-import { CreateClassDto, CreateSectionDto, UpdateClassDto, UpdateSectionDto } from "./class.dto";
+import { AssignClassCourseDto, CreateClassDto, CreateSectionDto, UpdateClassCourseDto, UpdateClassDto, UpdateSectionDto } from "./class.dto";
 
 @Controller("admin/classes")
 export class ClassController {
@@ -13,4 +13,7 @@ export class ClassController {
   @Post(":classId/sections") createSection(@Param("classId") classId: string, @Body() body: CreateSectionDto) { return this.classService.createSection(classId, body); }
   @Patch("sections/:id") updateSection(@Param("id") id: string, @Body() body: UpdateSectionDto) { return this.classService.updateSection(id, body); }
   @Delete("sections/:id") deleteSection(@Param("id") id: string) { return this.classService.deleteSection(id); }
+  @Post("sections/:sectionId/courses") assignCourse(@Param("sectionId") sectionId: string, @Body() body: AssignClassCourseDto) { return this.classService.assignCourse(sectionId, body); }
+  @Patch("courses/:id") updateCourseAssignment(@Param("id") id: string, @Body() body: UpdateClassCourseDto) { return this.classService.updateCourseAssignment(id, body); }
+  @Delete("courses/:id") removeCourseAssignment(@Param("id") id: string) { return this.classService.removeCourseAssignment(id); }
 }

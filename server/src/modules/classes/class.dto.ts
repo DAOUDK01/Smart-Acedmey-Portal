@@ -36,8 +36,6 @@ export class CreateSectionDto {
   @MinLength(1)
   name: string;
 
-  @IsOptional() @IsString() room?: string;
-  @IsOptional() @IsString() classTeacherId?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
 
   @IsOptional()
@@ -50,8 +48,17 @@ export class CreateSectionDto {
 
 export class UpdateSectionDto {
   @IsOptional() @IsString() @MinLength(1) name?: string;
-  @IsOptional() @IsString() room?: string;
-  @IsOptional() @IsString() classTeacherId?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) capacity?: number;
+}
+
+export class AssignClassCourseDto {
+  @IsString() @MinLength(1) courseId: string;
+  @IsString() @MinLength(1) teacherId: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+export class UpdateClassCourseDto {
+  @IsOptional() @IsString() @MinLength(1) teacherId?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
 }

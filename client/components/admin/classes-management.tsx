@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BookOpenCheck, Building2, ChevronDown, ChevronUp, GraduationCap, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { BookOpen, BookOpenCheck, Building2, ChevronDown, ChevronUp, GraduationCap, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Alert } from "@/components/ui/alert";
@@ -10,9 +10,13 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { PremiumCard } from "@/components/premium-card";
 
 type Teacher = { id: string; name: string; email: string; isActive: boolean };
+type Course = { id: string; title: string; code: string | null; isPublished: boolean };
 type ClassSection = {
-  id: string; classId: string; name: string; room: string | null; capacity: number;
-  classTeacherId: string | null; isActive: boolean;
+  id: string; classId: string; name: string; capacity: number; isActive: boolean; courseAssignments: CourseAssignment[];
+};
+type CourseAssignment = {
+  id: string; sectionId: string; courseId: string; teacherId: string; isActive: boolean;
+  courseTitle: string; courseCode: string | null; teacherName: string; teacherEmail: string;
 };
 type AcademicClass = {
   id: string; name: string; code: string; academicYear: string; description: string | null;
@@ -20,15 +24,18 @@ type AcademicClass = {
 };
 
 const emptyClass = { name: "", code: "", academicYear: new Date().getFullYear().toString(), description: "", isActive: true };
-const emptySection = { name: "", room: "", capacity: 30, classTeacherId: "", isActive: true };
+const emptySection = { name: "", capacity: 30, isActive: true };
+const emptyCourseAssignment = { courseId: "", teacherId: "", isActive: true };
 
-export function ClassesManagement({ mode, teachers }: { mode: "create" | "manage"; teachers: Teacher[] }) {
+export function ClassesManagement({ mode, teachers, courses }: { mode: "create" | "manage"; teachers: Teacher[]; courses: Course[] }) {
   const [classes, setClasses] = useState<AcademicClass[]>([]);
   const [classForm, setClassForm] = useState(emptyClass);
   const [sectionForms, setSectionForms] = useState<Record<string, typeof emptySection>>({});
+  const [courseForms, setCourseForms] = useState<Record<string, typeof emptyCourseAssignment>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [editingClass, setEditingClass] = useState<AcademicClass | null>(null);
   const [editingSection, setEditingSection] = useState<ClassSection | null>(null);
+  const [editingAssignment, setEditingAssignment] = useState<CourseAssignment | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -92,7 +99,29 @@ export function ClassesManagement({ mode, teachers }: { mode: "create" | "manage
     catch { notify("Section could not be deleted."); }
   }
 
-  const teacherName = (id: string | null) => teachers.find((teacher) => teacher.id === id)?.name ?? "Not assigned";
+  async function assignCourse(event: FormEvent, sectionId: string) {
+    event.preventDefault(); const form = courseForms[sectionId] ?? emptyCourseAssignment;
+    if (!form.courseId || !form.teacherId) return notify("Select both a course and a teacher.");
+    setBusy(true);
+    try {
+      await apiFetch(`/api/admin/classes/sections/${sectionId}/courses`, { method: "POST", body: JSON.stringify(form) });
+      setCourseForms((current) => ({ ...current, [sectionId]: emptyCourseAssignment })); notify("Course and teacher assigned to section."); await loadClasses();
+    } catch { notify("Course could not be assigned. It may already be in this section."); } finally { setBusy(false); }
+  }
+
+  async function saveCourseAssignment(event: FormEvent) {
+    event.preventDefault(); if (!editingAssignment) return; setBusy(true);
+    try {
+      await apiFetch(`/api/admin/classes/courses/${editingAssignment.id}`, { method: "PATCH", body: JSON.stringify({ teacherId: editingAssignment.teacherId, isActive: editingAssignment.isActive }) });
+      setEditingAssignment(null); notify("Course teacher updated."); await loadClasses();
+    } catch { notify("Course assignment could not be updated."); } finally { setBusy(false); }
+  }
+
+  async function removeCourseAssignment(assignment: CourseAssignment) {
+    if (!window.confirm(`Remove ${assignment.courseTitle} from this section?`)) return;
+    try { await apiFetch(`/api/admin/classes/courses/${assignment.id}`, { method: "DELETE" }); notify("Course removed from section."); await loadClasses(); }
+    catch { notify("Course assignment could not be removed."); }
+  }
 
   if (mode === "create") return (
     <PremiumCard eyebrow="Academic Structure" title="Create Class" description="Create a class first, then add its sections from Manage Classes.">
@@ -118,7 +147,7 @@ export function ClassesManagement({ mode, teachers }: { mode: "create" | "manage
         <Stat icon={Building2} label="Total Sections" value={totals.sections} color="cyan" />
         <Stat icon={Users} label="Total Capacity" value={totals.capacity} color="emerald" />
       </div>
-      <PremiumCard eyebrow="Academic Structure" title="Classes & Sections" description="Manage class details, sections, rooms, capacity, and class teachers.">
+      <PremiumCard eyebrow="Academic Structure" title="Classes, Sections & Courses" description="Manage sections, then assign courses and their teachers separately inside each section.">
         <div className="mt-6 space-y-4">
           {classes.map((item) => {
             const isOpen = expanded[item.id] ?? false;
@@ -134,14 +163,15 @@ export function ClassesManagement({ mode, teachers }: { mode: "create" | "manage
               </div>
               {isOpen && <div className="border-t border-white/10 p-5">
                 {item.description && <p className="mb-5 text-sm text-slate-400">{item.description}</p>}
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {item.sections.map((section) => <div key={section.id} className="rounded-xl border border-white/10 bg-ink-950/50 p-4">
-                    <div className="flex items-start justify-between"><div><h4 className="font-semibold text-white">Section {section.name}</h4><p className="mt-1 text-xs text-slate-500">Room {section.room || "not assigned"}</p></div><div className="flex"><button onClick={() => setEditingSection(section)} className="p-2 text-slate-500 hover:text-white"><Pencil size={14} /></button><button onClick={() => removeSection(section)} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14} /></button></div></div>
-                    <div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-lg bg-white/[0.04] p-3"><p className="text-[10px] uppercase tracking-widest text-slate-600">Capacity</p><p className="mt-1 text-sm text-slate-200">{section.capacity} students</p></div><div className="rounded-lg bg-white/[0.04] p-3"><p className="text-[10px] uppercase tracking-widest text-slate-600">Class Teacher</p><p className="mt-1 truncate text-sm text-slate-200">{teacherName(section.classTeacherId)}</p></div></div>
-                  </div>)}
+                <div className="mb-3 flex items-center gap-2"><Building2 size={17} className="text-accent-purple" /><h4 className="text-xs font-bold uppercase tracking-widest text-slate-400">Sections</h4></div>
+                <div className="space-y-4">
+                  {item.sections.map((section) => { const courseForm = courseForms[section.id] ?? emptyCourseAssignment; return <div key={section.id} className="rounded-xl border border-white/10 bg-ink-950/50 p-4">
+                    <div className="flex items-start justify-between"><div><h4 className="font-semibold text-white">Section {section.name}</h4><p className="mt-1 text-xs text-slate-500">Capacity: {section.capacity} students</p></div><div className="flex"><button onClick={() => setEditingSection(section)} className="p-2 text-slate-500 hover:text-white"><Pencil size={14} /></button><button onClick={() => removeSection(section)} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={14} /></button></div></div>
+                    <div className="mt-4 border-t border-white/10 pt-4"><div className="mb-3 flex items-center gap-2"><BookOpen size={15} className="text-accent-cyan" /><p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Section Courses & Teachers</p></div><div className="grid gap-3 lg:grid-cols-2">{section.courseAssignments.map((assignment) => <div key={assignment.id} className="rounded-lg border border-accent-cyan/15 bg-accent-cyan/[0.035] p-3"><div className="flex items-start justify-between gap-2"><div><p className="text-sm font-semibold text-white">{assignment.courseTitle}</p><p className="mt-1 text-xs text-accent-cyan">{assignment.teacherName}</p></div><div className="flex"><button onClick={() => setEditingAssignment(assignment)} className="p-1.5 text-slate-500 hover:text-white"><Pencil size={13} /></button><button onClick={() => removeCourseAssignment(assignment)} className="p-1.5 text-slate-500 hover:text-rose-400"><Trash2 size={13} /></button></div></div></div>)}</div>{!section.courseAssignments.length && <p className="py-3 text-center text-xs text-slate-600">No courses assigned to this section.</p>}<form onSubmit={(event) => assignCourse(event, section.id)} className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]"><Select required value={courseForm.courseId} onChange={(e) => setCourseForms({ ...courseForms, [section.id]: { ...courseForm, courseId: e.target.value } })}><option value="">Select course</option>{courses.filter((course) => !section.courseAssignments.some((assignment) => assignment.courseId === course.id)).map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</Select><Select required value={courseForm.teacherId} onChange={(e) => setCourseForms({ ...courseForms, [section.id]: { ...courseForm, teacherId: e.target.value } })}><option value="">Select teacher</option>{teachers.filter((teacher) => teacher.isActive).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</Select><Button type="submit" variant="secondary" size="sm" disabled={busy}><Plus size={14} /> Assign</Button></form></div>
+                  </div>; })}
                 </div>
                 {!item.sections.length && <div className="rounded-xl border border-dashed border-white/10 py-8 text-center text-sm text-slate-500">No sections added yet.</div>}
-                <form onSubmit={(event) => createSection(event, item.id)} className="mt-5 rounded-xl border border-accent-purple/20 bg-accent-purple/[0.04] p-4"><p className="mb-4 text-xs font-bold uppercase tracking-widest text-accent-purple">Add Section</p><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Input required placeholder="Section name (A)" value={form.name} onChange={(e) => setSectionForms({ ...sectionForms, [item.id]: { ...form, name: e.target.value } })} /><Input placeholder="Room" value={form.room} onChange={(e) => setSectionForms({ ...sectionForms, [item.id]: { ...form, room: e.target.value } })} /><Input required type="number" min={1} max={500} value={form.capacity} onChange={(e) => setSectionForms({ ...sectionForms, [item.id]: { ...form, capacity: Number(e.target.value) } })} /><Select value={form.classTeacherId} onChange={(e) => setSectionForms({ ...sectionForms, [item.id]: { ...form, classTeacherId: e.target.value } })}><option value="">Select class teacher</option>{teachers.filter((teacher) => teacher.isActive).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</Select></div><Button type="submit" variant="secondary" size="sm" className="mt-4" disabled={busy}><Plus size={14} /> Add Section</Button></form>
+                <form onSubmit={(event) => createSection(event, item.id)} className="mt-5 rounded-xl border border-accent-purple/20 bg-accent-purple/[0.04] p-4"><p className="mb-4 text-xs font-bold uppercase tracking-widest text-accent-purple">Add Section</p><div className="grid gap-3 sm:grid-cols-2"><Input required placeholder="Section name (A)" value={form.name} onChange={(e) => setSectionForms({ ...sectionForms, [item.id]: { ...form, name: e.target.value } })} /><Input required type="number" min={1} max={500} placeholder="Capacity" value={form.capacity} onChange={(e) => setSectionForms({ ...sectionForms, [item.id]: { ...form, capacity: Number(e.target.value) } })} /></div><Button type="submit" variant="secondary" size="sm" className="mt-4" disabled={busy}><Plus size={14} /> Add Section</Button></form>
               </div>}
             </div>;
           })}
@@ -149,7 +179,8 @@ export function ClassesManagement({ mode, teachers }: { mode: "create" | "manage
         </div>
       </PremiumCard>
       {editingClass && <Modal title="Edit Class" onClose={() => setEditingClass(null)}><form onSubmit={saveClass} className="space-y-4"><Field label="Class Name"><Input required value={editingClass.name} onChange={(e) => setEditingClass({ ...editingClass, name: e.target.value })} /></Field><div className="grid gap-4 sm:grid-cols-2"><Field label="Code"><Input required value={editingClass.code} onChange={(e) => setEditingClass({ ...editingClass, code: e.target.value })} /></Field><Field label="Academic Year"><Input required value={editingClass.academicYear} onChange={(e) => setEditingClass({ ...editingClass, academicYear: e.target.value })} /></Field></div><Field label="Description"><Textarea value={editingClass.description ?? ""} onChange={(e) => setEditingClass({ ...editingClass, description: e.target.value })} /></Field><Field label="Status"><Select value={String(editingClass.isActive)} onChange={(e) => setEditingClass({ ...editingClass, isActive: e.target.value === "true" })}><option value="true">Active</option><option value="false">Inactive</option></Select></Field><Button type="submit" variant="solid" disabled={busy}>Save Changes</Button></form></Modal>}
-      {editingSection && <Modal title={`Edit Section ${editingSection.name}`} onClose={() => setEditingSection(null)}><form onSubmit={saveSection} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Section Name"><Input required value={editingSection.name} onChange={(e) => setEditingSection({ ...editingSection, name: e.target.value })} /></Field><Field label="Room"><Input value={editingSection.room ?? ""} onChange={(e) => setEditingSection({ ...editingSection, room: e.target.value })} /></Field><Field label="Capacity"><Input type="number" min={1} max={500} value={editingSection.capacity} onChange={(e) => setEditingSection({ ...editingSection, capacity: Number(e.target.value) })} /></Field><Field label="Class Teacher"><Select value={editingSection.classTeacherId ?? ""} onChange={(e) => setEditingSection({ ...editingSection, classTeacherId: e.target.value })}><option value="">Not assigned</option>{teachers.filter((teacher) => teacher.isActive).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</Select></Field></div><Field label="Status"><Select value={String(editingSection.isActive)} onChange={(e) => setEditingSection({ ...editingSection, isActive: e.target.value === "true" })}><option value="true">Active</option><option value="false">Inactive</option></Select></Field><Button type="submit" variant="solid" disabled={busy}>Save Section</Button></form></Modal>}
+      {editingSection && <Modal title={`Edit Section ${editingSection.name}`} onClose={() => setEditingSection(null)}><form onSubmit={saveSection} className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Section Name"><Input required value={editingSection.name} onChange={(e) => setEditingSection({ ...editingSection, name: e.target.value })} /></Field><Field label="Capacity"><Input type="number" min={1} max={500} value={editingSection.capacity} onChange={(e) => setEditingSection({ ...editingSection, capacity: Number(e.target.value) })} /></Field></div><Field label="Status"><Select value={String(editingSection.isActive)} onChange={(e) => setEditingSection({ ...editingSection, isActive: e.target.value === "true" })}><option value="true">Active</option><option value="false">Inactive</option></Select></Field><Button type="submit" variant="solid" disabled={busy}>Save Section</Button></form></Modal>}
+      {editingAssignment && <Modal title={`Change ${editingAssignment.courseTitle} Teacher`} onClose={() => setEditingAssignment(null)}><form onSubmit={saveCourseAssignment} className="space-y-4"><Field label="Assigned Teacher"><Select required value={editingAssignment.teacherId} onChange={(e) => setEditingAssignment({ ...editingAssignment, teacherId: e.target.value })}>{teachers.filter((teacher) => teacher.isActive).map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name} ({teacher.email})</option>)}</Select></Field><Field label="Status"><Select value={String(editingAssignment.isActive)} onChange={(e) => setEditingAssignment({ ...editingAssignment, isActive: e.target.value === "true" })}><option value="true">Active</option><option value="false">Inactive</option></Select></Field><Button type="submit" variant="solid" disabled={busy}>Save Assignment</Button></form></Modal>}
     </div>
   );
 }

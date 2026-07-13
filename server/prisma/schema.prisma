@@ -51,6 +51,7 @@ model User {
 
   otpCodes           OtpCode[]
   passwordResetTokens PasswordResetToken[]
+  sectionCourseAssignments SectionCourseAssignment[]
 }
 
 model OtpCode {
@@ -119,16 +120,31 @@ model ClassSection {
   id             String        @id @default(cuid())
   classId        String
   name           String
-  room           String?
   capacity       Int           @default(30)
-  classTeacherId String?
   isActive       Boolean       @default(true)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   academicClass  AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+  courseAssignments SectionCourseAssignment[]
 
   @@unique([classId, name])
   @@index([classId, isActive])
+}
+
+model SectionCourseAssignment {
+  id        String        @id @default(cuid())
+  sectionId String
+  courseId  String
+  teacherId String
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  section   ClassSection  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  course    Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  teacher   User          @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+
+  @@unique([sectionId, courseId])
+  @@index([teacherId, isActive])
 }
 
 model Course {
@@ -142,6 +158,7 @@ model Course {
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  sectionAssignments SectionCourseAssignment[]
 }
 
 model Lecture {

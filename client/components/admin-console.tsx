@@ -791,11 +791,11 @@ export function AdminConsole() {
         )}
 
         {activeTab === "class-create" && (
-          <ClassesManagement mode="create" teachers={activeStaff} />
+          <ClassesManagement mode="create" teachers={activeStaff} courses={courses} />
         )}
 
         {activeTab === "classes" && (
-          <ClassesManagement mode="manage" teachers={activeStaff} />
+          <ClassesManagement mode="manage" teachers={activeStaff} courses={courses} />
         )}
 
         {selectedStaffInvitation && (
