@@ -21,7 +21,6 @@ const API_BASE_URL =
 const roleOptions: Array<{ value: PortalRole; label: string }> = [
   { value: "STUDENT", label: "Student" },
   { value: "TEACHER", label: "Teacher" },
-  { value: "EXPERT", label: "Expert" },
   { value: "GUARDIAN", label: "Guardian" },
 ];
 

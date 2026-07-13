@@ -259,8 +259,7 @@ export class QuizService {
         ...body,
         reviewedAt:
           body.status === QuizStatus.APPROVED ||
-          body.status === QuizStatus.REJECTED ||
-          body.status === QuizStatus.TEACHER_APPROVED
+          body.status === QuizStatus.REJECTED
             ? new Date()
             : undefined,
         publishedAt: body.status === QuizStatus.APPROVED ? new Date() : undefined,
@@ -279,23 +278,8 @@ export class QuizService {
     }
 
     return this.updateQuizQuestion(id, {
-      status: QuizStatus.TEACHER_APPROVED,
-      reviewedBy: reviewedBy ?? "Teacher",
-    });
-  }
-
-  async expertApproveQuiz(id: string, reviewedBy?: string) {
-    const quiz = await this.prisma.quizQuestion.findUnique({ where: { id } });
-    if (!quiz) {
-      throw new BadRequestException("Quiz not found");
-    }
-    if (quiz.status !== QuizStatus.TEACHER_APPROVED) {
-      throw new BadRequestException("Only teacher-approved quizzes can be approved by experts");
-    }
-
-    return this.updateQuizQuestion(id, {
       status: QuizStatus.APPROVED,
-      reviewedBy: reviewedBy ?? "Expert",
+      reviewedBy: reviewedBy ?? "Teacher",
     });
   }
 

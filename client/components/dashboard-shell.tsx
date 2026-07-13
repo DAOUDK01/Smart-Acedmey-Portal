@@ -9,7 +9,6 @@ const roleLabels = {
   teacher: "Teacher",
   student: "Student",
   guardian: "Guardian",
-  expert: "Expert",
 } as const;
 
 export function DashboardShell({

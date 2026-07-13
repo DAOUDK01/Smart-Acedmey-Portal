@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { AdminDashboard } from "./admin/admin-dashboard";
 import { apiFetch } from "@/lib/api";
 
-type Role = "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN" | "EXPERT";
+type Role = "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN";
 
 type User = {
   id: string;

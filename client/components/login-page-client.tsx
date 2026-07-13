@@ -22,7 +22,6 @@ const roleLabels: Record<PortalRole, string> = {
   TEACHER: "Teacher",
   STUDENT: "Student",
   GUARDIAN: "Guardian",
-  EXPERT: "Expert",
 };
 
 export function LoginPageClient() {

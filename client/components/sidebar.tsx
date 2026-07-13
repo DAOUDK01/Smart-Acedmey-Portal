@@ -35,7 +35,7 @@ interface SidebarItem {
 }
 
 interface SidebarProps {
-  role: "admin" | "teacher" | "student" | "guardian" | "expert";
+  role: "admin" | "teacher" | "student" | "guardian";
   activeItemId: string;
   onItemClick: (id: string) => void;
   userName?: string;
@@ -100,11 +100,6 @@ const sidebarItems: Record<string, SidebarItem[]> = {
     { id: "exams", name: "Mock Exams", icon: FileQuestion },
     { id: "progress", name: "Performance", icon: BarChart3 },
     { id: "ai-tutor", name: "AI Tutor", icon: Lightbulb },
-  ],
-  expert: [
-    { id: "overview", name: "Dashboard", icon: LayoutDashboard },
-    { id: "lectures", name: "Lecture Reviews", icon: Video },
-    { id: "quizzes", name: "Quiz Audit", icon: ShieldAlert },
   ],
   guardian: [
     { id: "overview", name: "Dashboard", icon: LayoutDashboard },

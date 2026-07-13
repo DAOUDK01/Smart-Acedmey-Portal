@@ -1,4 +1,4 @@
-export type PortalRole = "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN" | "EXPERT";
+export type PortalRole = "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN";
 
 export type PortalSession = {
   role: PortalRole;
@@ -10,7 +10,7 @@ export type PortalSession = {
 
 export type PortalMode = "demo" | "real";
 
-export type PortalPath = "/admin" | "/teacher" | "/student" | "/guardian" | "/expert";
+export type PortalPath = "/admin" | "/teacher" | "/student" | "/guardian";
 
 const SESSION_STORAGE_KEY = "smart-academy:portal-session";
 const ACCESS_TOKEN_STORAGE_KEY = "smart-academy:access-token";
@@ -21,7 +21,6 @@ const roleRoutes: Record<PortalRole, PortalPath> = {
   TEACHER: "/teacher",
   STUDENT: "/student",
   GUARDIAN: "/guardian",
-  EXPERT: "/expert",
 };
 
 export function getDashboardPath(role: PortalRole): PortalPath {

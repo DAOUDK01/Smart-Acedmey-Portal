@@ -14,7 +14,6 @@ export class StatsService {
     const roleCounts: Record<string, number> = {
       Students: 0,
       Teachers: 0,
-      Experts: 0,
       Guardians: 0,
       Admins: 0,
     };
@@ -22,7 +21,6 @@ export class StatsService {
     for (const user of users) {
       if (user.role === UserRole.STUDENT) roleCounts.Students += 1;
       if (user.role === UserRole.TEACHER) roleCounts.Teachers += 1;
-      if (user.role === UserRole.EXPERT) roleCounts.Experts += 1;
       if (user.role === UserRole.GUARDIAN) roleCounts.Guardians += 1;
       if (user.role === UserRole.ADMIN) roleCounts.Admins += 1;
     }
@@ -30,7 +28,6 @@ export class StatsService {
     const userDistribution = [
       { name: "Students", value: roleCounts.Students, color: "#8B5CF6" },
       { name: "Teachers", value: roleCounts.Teachers, color: "#06b6d4" },
-      { name: "Experts", value: roleCounts.Experts, color: "#f59e0b" },
       { name: "Guardians", value: roleCounts.Guardians, color: "#ec4899" },
       { name: "Admins", value: roleCounts.Admins, color: "#10b981" },
     ].filter((item) => item.value > 0);
@@ -130,32 +127,4 @@ export class StatsService {
     };
   }
 
-  async getExpertStats() {
-    const quizzes = await this.prisma.quizQuestion.findMany({
-      select: { status: true, reviewedBy: true, reviewedAt: true },
-    });
-
-    const teacherApproved = quizzes.filter(
-      (quiz) => quiz.status === QuizStatus.TEACHER_APPROVED,
-    ).length;
-    const approved = quizzes.filter((quiz) => quiz.status === QuizStatus.APPROVED).length;
-    const rejected = quizzes.filter((quiz) => quiz.status === QuizStatus.REJECTED).length;
-    const reviewed = approved + rejected;
-    const auditAccuracy = reviewed === 0 ? 0 : Math.round((approved / reviewed) * 1000) / 10;
-
-    const expertReviews = quizzes.filter(
-      (quiz) =>
-        quiz.reviewedBy &&
-        quiz.reviewedBy.toLowerCase().includes("expert") &&
-        quiz.reviewedAt,
-    ).length;
-
-    return {
-      pendingReview: teacherApproved,
-      auditAccuracy,
-      expertReviews,
-      approved,
-      rejected,
-    };
-  }
 }

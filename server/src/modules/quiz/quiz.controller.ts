@@ -179,28 +179,3 @@ export class TeacherQuizController {
   }
 }
 
-@Controller("expert/quizzes")
-export class ExpertQuizController {
-  constructor(private readonly quizService: QuizService) {}
-
-  @Get()
-  listPendingExpertReview() {
-    return this.quizService.listQuizQuestionsByStatus(QuizStatus.TEACHER_APPROVED);
-  }
-
-  @Post(":id/approve")
-  approveQuizQuestion(
-    @Param("id") id: string,
-    @Body() body: { reviewedBy?: string },
-  ) {
-    return this.quizService.expertApproveQuiz(id, body.reviewedBy);
-  }
-
-  @Post(":id/reject")
-  rejectQuizQuestion(
-    @Param("id") id: string,
-    @Body() body: { reviewedBy?: string },
-  ) {
-    return this.quizService.rejectQuiz(id, body.reviewedBy);
-  }
-}

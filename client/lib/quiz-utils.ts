@@ -1,6 +1,5 @@
 export type QuizStatus =
   | "pending"
-  | "teacher_approved"
   | "approved"
   | "rejected"
   | "edited";

@@ -92,7 +92,7 @@ type Quiz = {
 
 type User = {
   id: string;
-  role: "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN" | "EXPERT";
+  role: "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN";
   name: string;
   email: string;
 };
@@ -501,7 +501,7 @@ export function TeacherConsole() {
       await loadAll();
       showStatusMessage(
         action === "approve"
-          ? "Quiz sent to expert for final approval."
+          ? "Quiz approved and published for students."
           : "Quiz rejected successfully.",
       );
     } catch {

@@ -12,12 +12,10 @@ enum UserRole {
   TEACHER
   STUDENT
   GUARDIAN
-  EXPERT
 }
 
 enum QuizStatus {
   PENDING
-  TEACHER_APPROVED
   APPROVED
   REJECTED
   EDITED

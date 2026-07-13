@@ -14,9 +14,4 @@ export class StatsController {
   getTeacherStats() {
     return this.statsService.getTeacherStats();
   }
-
-  @Get("expert")
-  getExpertStats() {
-    return this.statsService.getExpertStats();
-  }
 }
