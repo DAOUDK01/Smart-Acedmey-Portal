@@ -37,7 +37,6 @@ export default function SignupPage() {
   const [role, setRole] = useState<PortalRole>("TEACHER");
   const [status, setStatus] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [googlePayload, setGooglePayload] = useState<any | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -145,95 +144,6 @@ export default function SignupPage() {
     }
   }
 
-  useEffect(() => {
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId) return;
-
-    const existing = document.getElementById("gsi-script");
-    if (!existing) {
-      const script = document.createElement("script");
-      script.id = "gsi-script";
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.defer = true;
-      document.head.appendChild(script);
-
-      script.onload = () => {
-        // @ts-ignore
-        if (typeof window !== "undefined" && (window as any).google) {
-          // @ts-ignore
-          (window as any).google.accounts.id.initialize({
-            client_id: clientId,
-            callback: (resp: any) => void handleGoogleCredential(resp),
-          });
-          // @ts-ignore
-          (window as any).google.accounts.id.renderButton(
-            document.getElementById("g_id_signup"),
-            { theme: "outline", size: "large", type: "standard" },
-          );
-        }
-      };
-    }
-
-    return () => {
-      const btn = document.getElementById("g_id_signup");
-      if (btn) btn.innerHTML = "";
-    };
-  }, []);
-
-  async function handleGoogleCredential(resp: any) {
-    if (!resp?.credential) {
-      setStatus("Google sign-up failed.");
-      return;
-    }
-
-    try {
-      // Decode the ID token client-side to prefill the signup form
-      const parts = resp.credential.split(".");
-      if (parts.length !== 3) {
-        throw new Error("Invalid ID token format.");
-      }
-      const payloadJson = JSON.parse(
-        decodeURIComponent(
-          atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))
-            .split("")
-            .map(function (c) {
-              return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
-            })
-            .join(""),
-        ),
-      );
-
-      // Ensure email is verified
-      if (!payloadJson?.email || !payloadJson?.email_verified) {
-        setStatus(
-          "Google account email is not verified. Use a verified account.",
-        );
-        return;
-      }
-
-      setGooglePayload(payloadJson);
-      setName(
-        (
-          payloadJson.name ||
-          payloadJson.given_name ||
-          payloadJson.sub ||
-          ""
-        ).trim(),
-      );
-      setEmail((payloadJson.email || "").toLowerCase());
-
-      // set a random password so backend account creation won't fail if it requires a password
-      setPassword(Math.random().toString(36).slice(-12));
-
-      setStatus(
-        "Google profile loaded. Confirm role and other details, then Create account.",
-      );
-    } catch (err: any) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       <section className="flex items-center justify-center bg-[radial-gradient(circle_at_bottom_right,_rgba(0,209,255,0.16),_transparent_28%),#0B1020] px-6 py-12">
@@ -276,24 +186,6 @@ export default function SignupPage() {
             className="mt-8 space-y-4"
             onSubmit={(event) => void handleSubmit(event)}
           >
-            {googlePayload ? (
-              <Alert variant="info" className="flex items-center gap-3">
-                {googlePayload.picture ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={googlePayload.picture}
-                    alt="Google profile"
-                    className="h-12 w-12 rounded-full border border-white/10 object-cover"
-                  />
-                ) : null}
-                <div>
-                  <p className="text-sm font-semibold text-white">
-                    Google profile loaded
-                  </p>
-                  <p className="text-xs text-slate-300">{googlePayload.email}</p>
-                </div>
-              </Alert>
-            ) : null}
             <Input
               placeholder="Full name"
               type="text"
@@ -334,29 +226,6 @@ export default function SignupPage() {
               {status}
             </Alert>
           ) : null}
-          {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-            <div className="mt-6" id="g_id_signup" />
-          ) : (
-            <div className="mt-6">
-              <Button
-                type="button"
-                variant="secondary"
-                fullWidth
-                onClick={() =>
-                  setStatus(
-                    "Google sign-up not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in client/.env.local and restart the dev server.",
-                  )
-                }
-              >
-                Sign up with Google (configure first)
-              </Button>
-            </div>
-          )}
-          <p className="mt-3 text-xs text-slate-400">
-            Google sign-up will preload your name, email, and avatar, then let
-            you choose a role and finish the remaining fields before account
-            creation.
-          </p>
           <p className="mt-6 text-sm text-slate-400">
             Already have an account?{" "}
             <Link

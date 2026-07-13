@@ -103,89 +103,6 @@ export function LoginPageClient() {
     }
   }
 
-  useEffect(() => {
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId) return;
-
-    const existing = document.getElementById("gsi-script");
-    if (!existing) {
-      const script = document.createElement("script");
-      script.id = "gsi-script";
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.defer = true;
-      document.head.appendChild(script);
-
-      script.onload = () => {
-        // @ts-ignore
-        if (typeof window !== "undefined" && (window as any).google) {
-          // @ts-ignore
-          (window as any).google.accounts.id.initialize({
-            client_id: clientId,
-            callback: (resp: any) => void handleGoogleCredential(resp),
-          });
-          // @ts-ignore
-          (window as any).google.accounts.id.renderButton(
-            document.getElementById("g_id_signin"),
-            { theme: "outline", size: "large", type: "standard" },
-          );
-        }
-      };
-    }
-
-    return () => {
-      const btn = document.getElementById("g_id_signin");
-      if (btn) btn.innerHTML = "";
-    };
-  }, []);
-
-  async function handleGoogleCredential(resp: any) {
-    if (!resp?.credential) {
-      setStatus("Google sign-in failed.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    setStatus(null);
-    try {
-      const body = { idToken: resp.credential };
-      const r = await fetch(`${API_BASE_URL}/api/auth/google/signin`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!r.ok) {
-        const txt = await r.text();
-        throw new Error(`Sign in failed: ${r.status} ${txt}`);
-      }
-
-      const data = await r.json();
-
-      savePortalSession({
-        role: data.role,
-        name: data.name,
-        email: data.email,
-        isActive: data.isActive ?? true, // Assume active if google sign in succeeded or handled by backend
-        mode: "real",
-      });
-
-      // store access token for authenticated requests
-      try {
-        if (typeof window !== "undefined" && data.accessToken) {
-          saveAccessToken(data.accessToken);
-          saveRefreshToken(data.refreshToken);
-        }
-      } catch {}
-
-      router.replace(getDashboardPath(data.role));
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Google sign-in failed.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       <section className="motion-rise flex items-center justify-center px-6 py-12">
@@ -249,24 +166,6 @@ export function LoginPageClient() {
               {status}
             </Alert>
           ) : null}
-          {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ? (
-            <div className="mt-6" id="g_id_signin" />
-          ) : (
-            <div className="mt-6">
-              <Button
-                type="button"
-                variant="secondary"
-                fullWidth
-                onClick={() =>
-                  setStatus(
-                    "Google sign-in not configured. Set NEXT_PUBLIC_GOOGLE_CLIENT_ID in client/.env.local and restart the dev server.",
-                  )
-                }
-              >
-                Sign in with Google (configure first)
-              </Button>
-            </div>
-          )}
           <div className="mt-6 flex items-center justify-center text-sm text-slate-400">
             <a href="/signup" className="transition hover:text-white">
               Don't have an account? Create one

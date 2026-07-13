@@ -3,7 +3,6 @@ import { PrismaService } from "../../prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import { EmailService } from "./email.service";
 import { createHash, randomBytes } from "crypto";
-import { OAuth2Client } from "google-auth-library";
 import {
   RegisterDto,
   VerifyEmailOtpDto,
@@ -11,7 +10,6 @@ import {
   VerifyLoginOtpDto,
   ForgotPasswordDto,
   ResetPasswordDto,
-  GoogleSigninDto,
   PasswordLoginDto,
 } from "./auth.dto";
 
@@ -315,59 +313,5 @@ export class AuthService implements OnModuleInit {
     });
 
     return { message: "Password reset successfully" };
-  }
-
-  async googleSignin(body: GoogleSigninDto) {
-    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-    const ticket = await client.verifyIdToken({
-      idToken: body.idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload || !payload.email || !payload.email_verified) {
-      throw new UnauthorizedException("Invalid Google ID token");
-    }
-
-    let user = await this.prisma.user.findUnique({
-      where: { email: payload.email },
-    });
-
-    if (user?.role === "ADMIN") {
-      throw new UnauthorizedException("Use the admin login portal");
-    }
-
-    if (!user) {
-      // Create a new user if they don't exist
-      // Default role to STUDENT; frontend can let user choose role later if needed
-      user = await this.prisma.user.create({
-        data: {
-          email: payload.email,
-          name: payload.name || payload.email.split("@")[0],
-          role: "STUDENT",
-          avatarUrl: payload.picture,
-          emailVerifiedAt: new Date(),
-          passwordHash: null,
-          isActive: false,
-        },
-      });
-    } else {
-      // Update last login time for existing user
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: { lastLoginAt: new Date() },
-      });
-    }
-
-    const tokens = this.issueTokens(user);
-    return {
-      ...tokens,
-      token: tokens.accessToken,
-      user,
-      role: user.role,
-      name: user.name,
-      email: user.email,
-      isActive: user.isActive,
-    };
   }
 }

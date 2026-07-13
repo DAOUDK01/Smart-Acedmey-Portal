@@ -64,8 +64,3 @@ export class ResetPasswordDto {
   @IsString()
   newPassword: string;
 }
-
-export class GoogleSigninDto {
-  @IsString()
-  idToken: string;
-}

@@ -7,7 +7,6 @@ import {
   VerifyLoginOtpDto,
   ForgotPasswordDto,
   ResetPasswordDto,
-  GoogleSigninDto,
   PasswordLoginDto,
   RefreshTokenDto,
 } from "./auth.dto";
@@ -61,10 +60,5 @@ export class AuthController {
   @Post("password/reset")
   async resetPassword(@Body() body: ResetPasswordDto) {
     return this.authService.resetPassword(body);
-  }
-
-  @Post("google/signin")
-  async googleSignin(@Body() body: GoogleSigninDto) {
-    return this.authService.googleSignin(body);
   }
 }
