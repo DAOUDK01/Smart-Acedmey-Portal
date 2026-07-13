@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "crypto";
 import { PrismaService } from "../../prisma.service";
 import {
   buildFallbackTranscript,
@@ -23,41 +24,36 @@ export class ContentService {
   constructor(private readonly prisma: PrismaService) {}
 
   listCourses() {
-    return this.prisma.course.findMany({ orderBy: { createdAt: "desc" } });
+    return this.prisma.$queryRaw`
+      SELECT "id", "code", "title", "description", "level", "isPublished", "sortOrder", "createdAt", "updatedAt"
+      FROM "Course" ORDER BY "createdAt" DESC
+    `;
   }
 
-  createCourse(body: CreateCourseDto) {
-    return this.prisma.course.create({
-      data: {
-        teacherId: body.teacherId,
-        code: body.code,
-        title: body.title,
-        description: body.description,
-        level: body.level,
-        isPublished: body.isPublished ?? false,
-        sortOrder: body.sortOrder ?? 0,
-      },
-    });
+  async createCourse(body: CreateCourseDto) {
+    const id = randomUUID();
+    const rows = await this.prisma.$queryRaw<any[]>`
+      INSERT INTO "Course" ("id", "code", "title", "description", "level", "isPublished", "sortOrder", "createdAt", "updatedAt")
+      VALUES (${id}, ${body.code || null}, ${body.title}, ${body.description || null}, ${body.level || null}, ${body.isPublished ?? false}, ${body.sortOrder ?? 0}, NOW(), NOW()) RETURNING *
+    `;
+    return rows[0];
   }
 
-  updateCourse(id: string, body: Record<string, unknown>) {
+  async updateCourse(id: string, body: Record<string, unknown>) {
     const payload = body as Record<string, any>;
-    return this.prisma.course.update({
-      where: { id },
-      data: {
-        teacherId: payload.teacherId,
-        code: payload.code,
-        title: payload.title,
-        description: payload.description,
-        level: payload.level,
-        isPublished: payload.isPublished,
-        sortOrder: payload.sortOrder,
-      },
-    });
+    const current = (await this.prisma.$queryRaw<any[]>`SELECT * FROM "Course" WHERE "id"=${id} LIMIT 1`)[0];
+    const rows = await this.prisma.$queryRaw<any[]>`
+      UPDATE "Course" SET "code"=${payload.code ?? current.code}, "title"=${payload.title ?? current.title},
+        "description"=${payload.description ?? current.description}, "level"=${payload.level ?? current.level},
+        "isPublished"=${payload.isPublished ?? current.isPublished}, "sortOrder"=${payload.sortOrder ?? current.sortOrder}, "updatedAt"=NOW()
+      WHERE "id"=${id} RETURNING *
+    `;
+    return rows[0];
   }
 
-  deleteCourse(id: string) {
-    return this.prisma.course.delete({ where: { id } });
+  async deleteCourse(id: string) {
+    await this.prisma.$executeRaw`DELETE FROM "Course" WHERE "id"=${id}`;
+    return { success: true };
   }
 
   listLectures() {

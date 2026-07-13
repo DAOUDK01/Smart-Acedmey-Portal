@@ -35,6 +35,14 @@ enum StaffInvitationStatus {
   REVISION_REQUESTED
 }
 
+enum StudentAdmissionStatus {
+  REQUESTED
+  INVITED
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
 model User {
   id           String   @id @default(cuid())
   role         UserRole
@@ -110,6 +118,7 @@ model AcademicClass {
   description  String?
   isActive     Boolean        @default(true)
   sections     ClassSection[]
+  admissionRequests StudentAdmission[]
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
@@ -126,9 +135,37 @@ model ClassSection {
   updatedAt      DateTime      @updatedAt
   academicClass  AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
   courseAssignments SectionCourseAssignment[]
+  admittedStudents StudentAdmission[]
 
   @@unique([classId, name])
   @@index([classId, isActive])
+}
+
+model StudentAdmission {
+  id               String                 @id @default(cuid())
+  name             String
+  email            String                 @unique
+  desiredClassId   String
+  assignedSectionId String?
+  selectedCourseIds Json
+  status           StudentAdmissionStatus @default(REQUESTED)
+  tokenHash        String?                @unique
+  phoneNumber      String?
+  personalDetails  Json?
+  guardianDetails  Json?
+  educationDetails Json?
+  documentLinks    Json?
+  adminNotes       String?
+  expiresAt        DateTime?
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  desiredClass     AcademicClass          @relation(fields: [desiredClassId], references: [id], onDelete: Restrict)
+  assignedSection  ClassSection?          @relation(fields: [assignedSectionId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([desiredClassId, assignedSectionId])
 }
 
 model SectionCourseAssignment {
@@ -149,7 +186,6 @@ model SectionCourseAssignment {
 
 model Course {
   id          String   @id @default(cuid())
-  teacherId   String
   code        String?  @unique
   title       String
   description String?

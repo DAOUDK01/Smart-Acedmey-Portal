@@ -3,9 +3,6 @@ import { UserRole } from "@prisma/client";
 
 export class CreateCourseDto {
   @IsString()
-  teacherId: string;
-
-  @IsString()
   code: string;
 
   @IsString()

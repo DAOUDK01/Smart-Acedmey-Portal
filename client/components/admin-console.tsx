@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { AdminDashboard } from "./admin/admin-dashboard";
 import { ClassesManagement } from "./admin/classes-management";
+import { AdmissionsManagement } from "./admin/admissions-management";
 import { apiFetch } from "@/lib/api";
 
 type Role = "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN";
@@ -40,7 +41,6 @@ type User = {
 
 type Course = {
   id: string;
-  teacherId: string;
   code: string | null;
   title: string;
   description: string | null;
@@ -145,7 +145,6 @@ export function AdminConsole() {
     title: "",
     code: "",
     description: "",
-    teacherId: "",
     level: "Beginner",
     isPublished: false
   });
@@ -253,7 +252,7 @@ export function AdminConsole() {
         }),
       });
       showStatus("Course created successfully!");
-      setCourseForm({ title: "", code: "", description: "", teacherId: "", level: "Beginner", isPublished: false });
+      setCourseForm({ title: "", code: "", description: "", level: "Beginner", isPublished: false });
       await loadAll();
       setActiveTab("courses");
     } catch (err) {
@@ -611,6 +610,8 @@ export function AdminConsole() {
           </PremiumCard>
         )}
 
+        {activeTab === "student-admissions" && <AdmissionsManagement />}
+
         {isStudentTab && (
           <div className="space-y-6">
             <div className="relative">
@@ -717,20 +718,6 @@ export function AdminConsole() {
                     onChange={e => setCourseForm({...courseForm, code: e.target.value})}
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Assign Teacher</label>
-                <Select
-                  className="mt-2"
-                  value={courseForm.teacherId}
-                  onChange={e => setCourseForm({...courseForm, teacherId: e.target.value})}
-                >
-                  <option value="">Select a teacher...</option>
-                  {users.filter(u => u.role === "TEACHER" && u.isActive).map(t => (
-                    <option key={t.id} value={t.id}>{t.name} ({t.email})</option>
-                  ))}
-                </Select>
               </div>
 
               <div>

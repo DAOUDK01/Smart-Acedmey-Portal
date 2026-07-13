@@ -61,7 +61,7 @@ const sidebarItems: Record<string, SidebarItem[]> = {
       name: "Students",
       icon: GraduationCap,
       children: [
-        { id: "student-add", name: "Add Student", icon: PlusCircle },
+        { id: "student-admissions", name: "Admissions", icon: ListChecks },
         { id: "student-view", name: "View Students", icon: GraduationCap },
         { id: "student-performance", name: "Performance", icon: LineChart },
       ],

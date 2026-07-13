@@ -156,6 +156,9 @@ export class AuthService implements OnModuleInit {
     if (body.role === "ADMIN") {
       throw new BadRequestException("Admin accounts cannot be registered publicly");
     }
+    if (body.role === "STUDENT") {
+      throw new BadRequestException("Students must submit an admission request before registration");
+    }
     const existingUser = await this.prisma.user.findUnique({ where: { email: body.email } });
     if (existingUser) {
       throw new ConflictException("User already exists");

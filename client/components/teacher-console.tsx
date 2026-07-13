@@ -55,7 +55,6 @@ function formatTime(seconds: number) {
 
 type Course = {
   id: string;
-  teacherId: string;
   title: string;
   code: string | null;
   description?: string | null;
