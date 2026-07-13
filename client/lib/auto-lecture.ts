@@ -1,4 +1,5 @@
 // Lightweight client helpers for auto-transcript extraction and quiz generation.
+import { loadAccessToken } from "@/lib/session";
 
 export async function extractTranscriptFromUrl(
   url: string,
@@ -51,6 +52,7 @@ export async function extractTranscriptFromFile(
     form.append("file", file);
     const res = await fetch(`${apiBase}/api/teacher/transcribe`, {
       method: "POST",
+      headers: { Authorization: `Bearer ${loadAccessToken() ?? ""}` },
       body: form,
     });
     if (res.ok) {
@@ -82,7 +84,10 @@ export async function autoGenerateQuizForDraft({
 }) {
   const res = await fetch(apiBase, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${loadAccessToken() ?? ""}`,
+    },
     body: JSON.stringify({ topic, transcript, lectureId, questionCount }),
   });
 

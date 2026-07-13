@@ -9,9 +9,7 @@ import { PendingApprovalBanner } from "@/components/pending-approval-banner";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
+import { apiFetch } from "@/lib/api";
 
 type Progress = {
   id: string;
@@ -39,14 +37,6 @@ type QuizAttempt = {
   passed: boolean;
   submittedAt: string;
 };
-
-async function apiFetch<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return (await response.json()) as T;
-}
 
 export default function GuardianPage() {
   const { ready, isApproved } = usePortalLock("/guardian");

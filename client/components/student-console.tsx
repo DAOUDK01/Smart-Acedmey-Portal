@@ -34,6 +34,7 @@ import {
 import { LecturePlayer, type LectureQuiz } from "@/components/lecture-player";
 import { StudentDashboard } from "./student/student-dashboard";
 import { MockExams } from "./student/mock-exams";
+import { API_BASE_URL, apiFetch, authenticatedFetch } from "@/lib/api";
 
 type StudentProgress = {
   id: string;
@@ -51,8 +52,6 @@ type ChatMessage = {
   role: "user" | "bot";
   content: string;
 };
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
 
 type Course = {
   id: string;
@@ -85,12 +84,6 @@ type Quiz = {
   topic?: string;
   segment?: string;
 };
-
-async function apiFetch<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) throw new Error(await response.text());
-  return (await response.json()) as T;
-}
 
 function getYouTubeId(url: string) {
   if (!url) return null;
@@ -185,7 +178,7 @@ export function StudentConsole() {
   }, [quizzes, currentLecture]);
 
   const handleSubmitQuizAnswer = async (quiz: LectureQuiz, answer: string) => {
-    const response = await fetch(`${API_BASE_URL}/api/teacher/quizzes/${quiz.id}/attempt`, {
+    const response = await authenticatedFetch(`/api/teacher/quizzes/${quiz.id}/attempt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -9,9 +9,10 @@ import { Panel } from "@/components/ui/panel";
 import {
   getDashboardPath,
   savePortalSession,
+  saveAccessToken,
+  saveRefreshToken,
   type PortalRole,
 } from "@/lib/session";
-import { listAvailableAuthUsers } from "@/lib/local-auth";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
@@ -36,6 +37,8 @@ export function LoginPageClient() {
       const params = new URLSearchParams(window.location.search);
       if (params.get("error") === "pending_approval") {
         setStatus("Your account is pending admin approval. Please wait for an administrator to activate it.");
+      } else if (params.get("registered") === "1") {
+        setStatus("Account created. Sign in with your email and password.");
       }
     }
   }, []);
@@ -46,49 +49,29 @@ export function LoginPageClient() {
     setIsSubmitting(true);
 
     try {
-      let matchedUser: {
+      if (!password.trim()) {
+        throw new Error("Enter your password to continue.");
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Sign in failed.");
+      }
+      const data = await response.json();
+      const matchedUser = data.user as {
         role: PortalRole;
         name: string;
         email: string;
         isActive: boolean;
-      } | null = null;
+      };
 
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/users/by-email/${encodeURIComponent(email.trim())}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-             throw new Error("No account was found for that email address.");
-          }
-          throw new Error(`Sign in failed with status ${response.status}.`);
-        }
-
-        matchedUser = (await response.json()) as {
-          role: PortalRole;
-          name: string;
-          email: string;
-          isActive: boolean;
-        };
-      } catch (fetchError) {
-        if (
-          fetchError instanceof Error &&
-          (fetchError.message.startsWith("Sign in failed with status") || fetchError.message === "No account was found for that email address.")
-        ) {
-          throw fetchError;
-        }
-
-        const users = listAvailableAuthUsers();
-        matchedUser = users.find(
-          (user) => user.email.toLowerCase() === email.trim().toLowerCase(),
-        ) as any;
-      }
-
-      if (!matchedUser) {
-        throw new Error("No account was found for that email address.");
-      }
-
-      if (!password.trim()) {
-        throw new Error("Enter your password to continue.");
-      }
+      saveAccessToken(data.accessToken);
+      saveRefreshToken(data.refreshToken);
 
       savePortalSession({
         role: matchedUser.role,
@@ -190,10 +173,8 @@ export function LoginPageClient() {
       // store access token for authenticated requests
       try {
         if (typeof window !== "undefined" && data.accessToken) {
-          window.localStorage.setItem(
-            "smart-academy:access-token",
-            data.accessToken,
-          );
+          saveAccessToken(data.accessToken);
+          saveRefreshToken(data.refreshToken);
         }
       } catch {}
 

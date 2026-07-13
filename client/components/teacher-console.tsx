@@ -32,8 +32,7 @@ import {
   type LectureSegment,
 } from "@/lib/transcript-segments";
 import { extractTranscriptFromFile } from "@/lib/auto-lecture";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
+import { API_BASE_URL, apiFetch, authenticatedFetch } from "@/lib/api";
 
 function getYouTubeId(url: string) {
   if (!url) return null;
@@ -118,20 +117,6 @@ type ManualMockForm = {
   options: string;
   correctAnswer: string;
 };
-
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return (await response.json()) as T;
-}
 
 function parseWeakTopics(value: unknown) {
   if (Array.isArray(value)) {
@@ -350,7 +335,7 @@ export function TeacherConsole() {
         form.append("title", lectureTitle);
         if (videoUrl) form.append("videoUrl", videoUrl);
 
-        const response = await fetch(`${API_BASE_URL}/api/teacher/transcribe`, {
+        const response = await authenticatedFetch("/api/teacher/transcribe", {
           method: "POST",
           body: form,
         });
@@ -363,7 +348,7 @@ export function TeacherConsole() {
         setTranscript(data.transcript || "");
         if (data.videoUrl) setVideoUrl(data.videoUrl);
       } else {
-        const response = await fetch(`${API_BASE_URL}/api/teacher/transcribe`, {
+        const response = await authenticatedFetch("/api/teacher/transcribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

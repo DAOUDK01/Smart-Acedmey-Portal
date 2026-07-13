@@ -8,6 +8,12 @@ import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
 
 async function bootstrap() {
+  const frontendUrl = process.env.FRONTEND_URL?.trim();
+
+  if (!frontendUrl) {
+    throw new Error("FRONTEND_URL is not configured in the server environment");
+  }
+
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix("api");
   app.useGlobalPipes(
@@ -18,7 +24,7 @@ async function bootstrap() {
     }),
   );
   app.enableCors({
-    origin: true,
+    origin: frontendUrl,
     credentials: true,
   });
 
@@ -33,7 +39,7 @@ async function bootstrap() {
   app.use(
     "/uploads",
     (req: any, res: any, next: any) => {
-      res.header("Access-Control-Allow-Origin", "*");
+      res.header("Access-Control-Allow-Origin", frontendUrl);
       res.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
       res.header("Access-Control-Allow-Headers", "Range, Origin, Content-Type, Accept");
       res.header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");

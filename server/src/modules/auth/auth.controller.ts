@@ -8,11 +8,25 @@ import {
   ForgotPasswordDto,
   ResetPasswordDto,
   GoogleSigninDto,
+  PasswordLoginDto,
+  RefreshTokenDto,
 } from "./auth.dto";
+import { Public } from "./public.decorator";
 
+@Public()
 @Controller("auth")
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Post("login")
+  async login(@Body() body: PasswordLoginDto) {
+    return this.authService.login(body);
+  }
+
+  @Post("refresh")
+  async refresh(@Body() body: RefreshTokenDto) {
+    return this.authService.refresh(body.refreshToken);
+  }
 
   @Post("register")
   async register(@Body() body: RegisterDto) {

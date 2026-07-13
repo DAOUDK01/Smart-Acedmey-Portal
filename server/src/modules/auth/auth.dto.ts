@@ -28,6 +28,19 @@ export class RequestLoginOtpDto {
   email: string;
 }
 
+export class PasswordLoginDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  password: string;
+}
+
+export class RefreshTokenDto {
+  @IsString()
+  refreshToken: string;
+}
+
 export class VerifyLoginOtpDto {
   @IsEmail()
   email: string;

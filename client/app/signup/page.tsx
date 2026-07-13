@@ -60,7 +60,7 @@ export default function SignupPage() {
       } | null = null;
 
       try {
-        const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+        const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -96,11 +96,12 @@ export default function SignupPage() {
           );
         }
 
-        createdUser = (await response.json()) as {
-          role: PortalRole;
-          name: string;
-          email: string;
-          isActive: boolean;
+        await response.json();
+        createdUser = {
+          role,
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          isActive: role === "ADMIN",
         };
       } catch (fetchError) {
         if (
@@ -130,23 +131,7 @@ export default function SignupPage() {
         };
       }
 
-      savePortalSession({
-        role: createdUser.role,
-        name: createdUser.name,
-        email: createdUser.email,
-        isActive: createdUser.isActive,
-        mode: "real",
-      });
-
-      if (!createdUser.isActive) {
-        setStatus(
-          `Account created. Your ${roleLabels[createdUser.role]} portal is open, but data will stay empty until an admin approves your account.`,
-        );
-      } else {
-        setStatus(`Created ${createdUser.name}'s account.`);
-      }
-
-      router.replace(getDashboardPath(createdUser.role));
+      router.replace("/login?registered=1");
     } catch (signupError) {
       let errorMessage = "Sign up failed.";
       if (signupError instanceof Error) {

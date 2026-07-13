@@ -12,6 +12,7 @@ import {
   ForgotPasswordDto,
   ResetPasswordDto,
   GoogleSigninDto,
+  PasswordLoginDto,
 } from "./auth.dto";
 
 @Injectable()
@@ -32,6 +33,72 @@ export class AuthService {
 
   private hashOtp(otp: string): string {
     return createHash("sha256").update(otp).digest("hex");
+  }
+
+  private issueTokens(user: { id: string; role: string }) {
+    const refreshSecret = process.env.REFRESH_TOKEN_SECRET?.trim();
+    const refreshExpiry = process.env.REFRESH_TOKEN_EXPIRY?.trim();
+    if (!refreshSecret || !refreshExpiry) {
+      throw new Error("REFRESH_TOKEN_SECRET and REFRESH_TOKEN_EXPIRY must be configured");
+    }
+
+    return {
+      accessToken: this.jwtService.sign({
+        userId: user.id,
+        role: user.role,
+        tokenType: "access",
+      }),
+      refreshToken: this.jwtService.sign({
+        userId: user.id,
+        role: user.role,
+        tokenType: "refresh",
+      }, {
+        secret: refreshSecret,
+        expiresIn: refreshExpiry as any,
+      }),
+    };
+  }
+
+  async refresh(refreshToken: string) {
+    const refreshSecret = process.env.REFRESH_TOKEN_SECRET?.trim();
+    if (!refreshSecret) throw new UnauthorizedException("Refresh token is not configured");
+
+    try {
+      const payload = await this.jwtService.verifyAsync<{
+        userId: string;
+        role: string;
+        tokenType: string;
+      }>(refreshToken, { secret: refreshSecret });
+      if (payload.tokenType !== "refresh") {
+        throw new UnauthorizedException("Invalid refresh token");
+      }
+      const user = await this.prisma.user.findUnique({ where: { id: payload.userId } });
+      if (!user || user.role !== payload.role) {
+        throw new UnauthorizedException("Invalid refresh token");
+      }
+      return this.issueTokens(user);
+    } catch {
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+  }
+
+  async login(body: PasswordLoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: body.email.toLowerCase().trim() },
+    });
+
+    if (!user?.passwordHash || user.passwordHash !== this.hashPassword(body.password)) {
+      throw new UnauthorizedException("Invalid email or password");
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+    const tokens = this.issueTokens(user);
+
+    const { passwordHash: _passwordHash, ...safeUser } = updatedUser;
+    return { ...tokens, token: tokens.accessToken, user: safeUser };
   }
 
   async register(body: RegisterDto) {
@@ -91,8 +158,8 @@ export class AuthService {
       data: { emailVerifiedAt: new Date() },
     });
 
-    const token = this.jwtService.sign({ userId: user.id, role: user.role });
-    return { token, user };
+    const tokens = this.issueTokens(user);
+    return { ...tokens, token: tokens.accessToken, user };
   }
 
   async requestLoginOtp(body: RequestLoginOtpDto) {
@@ -140,8 +207,8 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const token = this.jwtService.sign({ userId: user.id, role: user.role });
-    return { token, user };
+    const tokens = this.issueTokens(user);
+    return { ...tokens, token: tokens.accessToken, user };
   }
 
   async forgotPassword(body: ForgotPasswordDto) {
@@ -230,10 +297,10 @@ export class AuthService {
       });
     }
 
-    const token = this.jwtService.sign({ userId: user.id, role: user.role });
+    const tokens = this.issueTokens(user);
     return {
-      accessToken: token,
-      token,
+      ...tokens,
+      token: tokens.accessToken,
       user,
       role: user.role,
       name: user.name,

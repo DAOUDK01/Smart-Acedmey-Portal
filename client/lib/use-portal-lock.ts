@@ -4,10 +4,13 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   getDashboardPath,
+  loadAccessToken,
+  isAccessTokenValidForRole,
   loadPortalSession,
   type PortalPath,
   type PortalSession,
 } from "@/lib/session";
+import { refreshAccessToken } from "@/lib/api";
 
 export function usePortalLock(expectedPath: PortalPath) {
   const router = useRouter();
@@ -15,37 +18,45 @@ export function usePortalLock(expectedPath: PortalPath) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const currentSession = loadPortalSession();
-    let sessionToUse: PortalSession | null = currentSession;
+    let active = true;
 
-    if (!currentSession || currentSession.mode !== "real") {
-      if (process.env.NODE_ENV === "development") {
-        sessionToUse = {
-          role: expectedPath === "/admin" ? "ADMIN" : expectedPath === "/teacher" ? "TEACHER" : expectedPath === "/expert" ? "EXPERT" : expectedPath === "/guardian" ? "GUARDIAN" : "STUDENT",
-          name: "Dev User",
-          email: "dev@local",
-          isActive: true,
-          mode: "real" as const,
-        };
-        setSession(sessionToUse);
-        setReady(true);
-      } else {
+    async function checkAccess() {
+      const currentSession = loadPortalSession();
+      let token = loadAccessToken();
+      if (
+        currentSession &&
+        (!token || !isAccessTokenValidForRole(token, currentSession.role))
+      ) {
+        token = await refreshAccessToken();
+      }
+      if (!active) return;
+      const sessionToUse =
+        currentSession?.mode === "real" &&
+        token &&
+        isAccessTokenValidForRole(token, currentSession.role)
+          ? currentSession
+          : null;
+
+      if (!sessionToUse) {
         setSession(null);
         setReady(true);
         router.replace("/login");
         return;
       }
-    } else {
-      setSession(currentSession);
-      setReady(true);
-    }
 
-    if (sessionToUse) {
+      setSession(sessionToUse);
+      setReady(true);
+
       const dashboardPath = getDashboardPath(sessionToUse.role as PortalSession["role"]);
       if (dashboardPath !== expectedPath) {
         router.replace(dashboardPath);
       }
     }
+
+    void checkAccess();
+    return () => {
+      active = false;
+    };
   }, [expectedPath, router]);
 
   const isApproved = session?.role === "ADMIN" || session?.isActive === true;
