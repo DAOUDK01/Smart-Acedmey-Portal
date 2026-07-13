@@ -39,18 +39,21 @@ export function usePortalLock(expectedPath: PortalPath) {
 
       if (!sessionToUse) {
         setSession(null);
-        setReady(true);
+        setReady(false);
         router.replace(expectedPath === "/admin" ? "/admin/login" : "/login");
+        return;
+      }
+
+      const dashboardPath = getDashboardPath(sessionToUse.role as PortalSession["role"]);
+      if (dashboardPath !== expectedPath) {
+        setSession(null);
+        setReady(false);
+        router.replace(dashboardPath);
         return;
       }
 
       setSession(sessionToUse);
       setReady(true);
-
-      const dashboardPath = getDashboardPath(sessionToUse.role as PortalSession["role"]);
-      if (dashboardPath !== expectedPath) {
-        router.replace(dashboardPath);
-      }
     }
 
     void checkAccess();

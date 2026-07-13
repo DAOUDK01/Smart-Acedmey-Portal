@@ -101,6 +101,36 @@ model StaffInvitation {
   @@index([status, createdAt])
 }
 
+model AcademicClass {
+  id           String         @id @default(cuid())
+  name         String
+  code         String         @unique
+  academicYear String
+  description  String?
+  isActive     Boolean        @default(true)
+  sections     ClassSection[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([academicYear, isActive])
+}
+
+model ClassSection {
+  id             String        @id @default(cuid())
+  classId        String
+  name           String
+  room           String?
+  capacity       Int           @default(30)
+  classTeacherId String?
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  academicClass  AcademicClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, name])
+  @@index([classId, isActive])
+}
+
 model Course {
   id          String   @id @default(cuid())
   teacherId   String

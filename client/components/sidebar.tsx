@@ -21,6 +21,7 @@ import {
   ChevronDown,
   LineChart,
   ListChecks
+  ,School
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -72,6 +73,15 @@ const sidebarItems: Record<string, SidebarItem[]> = {
       children: [
         { id: "create-course", name: "Add Course", icon: PlusCircle },
         { id: "courses", name: "View Courses", icon: BookOpen },
+      ],
+    },
+    {
+      id: "class-management",
+      name: "Classes",
+      icon: School,
+      children: [
+        { id: "class-create", name: "Create Class", icon: PlusCircle },
+        { id: "classes", name: "Manage Classes", icon: School },
       ],
     },
     { id: "analytics", name: "Analytics", icon: BarChart3 },

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AdminDashboard } from "./admin/admin-dashboard";
+import { ClassesManagement } from "./admin/classes-management";
 import { apiFetch } from "@/lib/api";
 
 type Role = "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN";
@@ -787,6 +788,14 @@ export function AdminConsole() {
               </div>
             </div>
           </PremiumCard>
+        )}
+
+        {activeTab === "class-create" && (
+          <ClassesManagement mode="create" teachers={activeStaff} />
+        )}
+
+        {activeTab === "classes" && (
+          <ClassesManagement mode="manage" teachers={activeStaff} />
         )}
 
         {selectedStaffInvitation && (
