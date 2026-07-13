@@ -2,6 +2,7 @@
   "name": "@smart-academy/api",
   "private": true,
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1085.0",
     "@nestjs/common": "^11.1.24",
     "@nestjs/core": "^11.1.24",
     "@nestjs/jwt": "^11.0.2",

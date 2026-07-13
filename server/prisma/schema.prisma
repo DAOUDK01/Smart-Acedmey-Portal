@@ -29,6 +29,14 @@ enum OtpPurpose {
   PASSWORD_RESET
 }
 
+enum StaffInvitationStatus {
+  INVITED
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+}
+
 model User {
   id           String   @id @default(cuid())
   role         UserRole
@@ -72,6 +80,27 @@ model PasswordResetToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+model StaffInvitation {
+  id               String                @id @default(cuid())
+  email            String                @unique
+  name             String
+  role             UserRole
+  tokenHash        String                @unique
+  status           StaffInvitationStatus @default(INVITED)
+  phoneNumber      String?
+  educationDetails String?
+  personalDetails  String?
+  documentLinks    Json?
+  adminNotes       String?
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+  expiresAt        DateTime
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([status, createdAt])
 }
 
 model Course {

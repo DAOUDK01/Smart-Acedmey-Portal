@@ -9,17 +9,17 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { formatDateTime } from "@/lib/portal-data";
 import { 
-  Users, 
   BookOpen, 
-  BarChart3, 
-  Settings, 
-  PlusCircle, 
-  ShieldCheck, 
-  LayoutDashboard,
-  UserCheck,
   UserX,
-  GraduationCap,
-  Search
+  Search,
+  Clock,
+  Eye,
+  FileText,
+  Mail,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AdminDashboard } from "./admin/admin-dashboard";
@@ -68,6 +68,51 @@ type StudentProgress = {
   lastActivityAt: string;
 };
 
+type StaffInvitation = {
+  id: string;
+  email: string;
+  name: string;
+  role: "TEACHER";
+  status: "INVITED" | "SUBMITTED" | "APPROVED" | "REJECTED" | "REVISION_REQUESTED";
+  educationDetails: string | null;
+  personalDetails: string | null;
+  documentLinks: string[] | null;
+  adminNotes: string | null;
+  createdAt: string;
+  submittedAt: string | null;
+};
+
+type StaffInvitationResponse = StaffInvitation & {
+  registrationLink: string;
+  emailSent: boolean;
+  emailError?: string;
+};
+
+function parseSubmittedDetails(details?: string | null) {
+  if (!details) return [];
+
+  return details
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separatorIndex = line.indexOf(":");
+      if (separatorIndex === -1) return { label: "Detail", value: line };
+
+      return {
+        label: line.slice(0, separatorIndex).trim(),
+        value: line.slice(separatorIndex + 1).trim() || "Not provided",
+      };
+    });
+}
+
+function formatDocumentLabel(label: string) {
+  return label
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^\w/, (char) => char.toUpperCase())
+    .trim();
+}
+
 export function AdminConsole() {
   const { ready, session } = usePortalLock("/admin");
   const [activeTab, setActiveTab] = useState("overview");
@@ -76,6 +121,8 @@ export function AdminConsole() {
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [studentProgress, setStudentProgress] = useState<StudentProgress[]>([]);
+  const [staffInvitations, setStaffInvitations] = useState<StaffInvitation[]>([]);
+  const [selectedStaffInvitation, setSelectedStaffInvitation] = useState<StaffInvitation | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -83,6 +130,9 @@ export function AdminConsole() {
     userDistribution: { name: string; value: number; color: string }[];
     monthlySignups: { month: string; signups: number }[];
   }>({ userDistribution: [], monthlySignups: [] });
+  const isStaffViewTab = activeTab === "users" || activeTab === "staff-view";
+  const isStaffApprovalsTab = activeTab === "staff-approvals";
+  const isStudentTab = activeTab === "students" || activeTab === "student-view" || activeTab === "student-performance";
 
   const showStatus = (msg: string) => {
     setStatus(msg);
@@ -98,6 +148,15 @@ export function AdminConsole() {
     level: "Beginner",
     isPublished: false
   });
+  const [staffForm, setStaffForm] = useState({
+    name: "",
+    email: "",
+  });
+  const [studentForm, setStudentForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+  });
 
   useEffect(() => {
     if (!ready) return;
@@ -106,13 +165,14 @@ export function AdminConsole() {
 
   async function loadAll() {
     try {
-      const [nextUsers, nextCourses, nextLectures, nextQuizzes, progressData, statsData] = await Promise.all([
+      const [nextUsers, nextCourses, nextLectures, nextQuizzes, progressData, statsData, nextInvitations] = await Promise.all([
         apiFetch<User[]>("/api/admin/users"),
         apiFetch<Course[]>("/api/admin/courses"),
         apiFetch<Lecture[]>("/api/admin/lectures"),
         apiFetch<Quiz[]>("/api/teacher/quizzes/approved"),
         apiFetch<StudentProgress[]>("/api/guardian/progress"),
         apiFetch<{ userDistribution: { name: string; value: number; color: string }[]; monthlySignups: { month: string; signups: number }[] }>("/api/stats/admin"),
+        apiFetch<StaffInvitation[]>("/api/admin/users/staff-invitations"),
       ]);
       setUsers(nextUsers);
       setCourses(nextCourses);
@@ -123,6 +183,7 @@ export function AdminConsole() {
         userDistribution: statsData.userDistribution,
         monthlySignups: statsData.monthlySignups,
       });
+      setStaffInvitations(nextInvitations);
     } catch (error) {
       console.error("Failed to load admin data", error);
     }
@@ -141,6 +202,26 @@ export function AdminConsole() {
       s.email.toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [users, searchQuery]);
+
+  const activeStaff = useMemo(
+    () => users.filter((user) => user.role === "TEACHER" && user.isActive),
+    [users],
+  );
+
+  const inactiveStaff = useMemo(
+    () => users.filter((user) => user.role === "TEACHER" && !user.isActive),
+    [users],
+  );
+
+  const submittedStaffInvitations = useMemo(
+    () => staffInvitations.filter((invitation) => invitation.status === "SUBMITTED"),
+    [staffInvitations],
+  );
+
+  const pendingStaffInvitations = useMemo(
+    () => staffInvitations.filter((invitation) => invitation.status === "INVITED" || invitation.status === "REVISION_REQUESTED"),
+    [staffInvitations],
+  );
 
   async function updateApproval(userId: string, approved: boolean) {
     setIsProcessing(true);
@@ -181,6 +262,66 @@ export function AdminConsole() {
     }
   }
 
+  async function saveStaff(e: React.FormEvent) {
+    e.preventDefault();
+    setIsProcessing(true);
+    try {
+      const result = await apiFetch<StaffInvitationResponse>("/api/admin/users/staff-invitations", {
+        method: "POST",
+        body: JSON.stringify({ ...staffForm, role: "TEACHER" }),
+      });
+      showStatus(
+        result.emailSent
+          ? "Staff invitation email sent."
+          : `Email failed, but invitation link was created: ${result.registrationLink}`,
+      );
+      setStaffForm({ name: "", email: "" });
+      await loadAll();
+      setActiveTab("staff-view");
+    } catch (error) {
+      showStatus(error instanceof Error ? error.message : "Failed to send staff invitation.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function reviewStaffInvitation(invitationId: string, nextStatus: "APPROVED" | "REJECTED" | "REVISION_REQUESTED") {
+    const adminNotes = nextStatus === "APPROVED" ? "" : window.prompt("Add notes for the staff email:") || "";
+    setIsProcessing(true);
+    try {
+      await apiFetch(`/api/admin/users/staff-invitations/${invitationId}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus, adminNotes }),
+      });
+      showStatus("Staff review updated and email sent.");
+      setSelectedStaffInvitation(null);
+      await loadAll();
+    } catch (error) {
+      showStatus("Failed to update staff review.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function saveStudent(e: React.FormEvent) {
+    e.preventDefault();
+    setIsProcessing(true);
+    try {
+      await apiFetch("/api/admin/users", {
+        method: "POST",
+        body: JSON.stringify({ ...studentForm, role: "STUDENT" }),
+      });
+      showStatus("Student login created successfully.");
+      setStudentForm({ name: "", email: "", password: "" });
+      await loadAll();
+      setActiveTab("student-view");
+    } catch (error) {
+      showStatus("Failed to create student login.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
   if (!ready) return null;
 
   return (
@@ -211,66 +352,265 @@ export function AdminConsole() {
           />
         )}
 
-        {activeTab === "users" && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <PremiumCard eyebrow="Approvals" title="Pending Accounts" description="Review and approve all portal accounts awaiting activation.">
-              <div className="mt-4 space-y-3">
-                {pendingApprovals.map(user => (
-                  <div key={user.id} className="flex items-center justify-between rounded-2xl border border-white/5 bg-white/5 p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold text-slate-400">
-                        {user.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">{user.name}</p>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-accent-purple">{user.role}</p>
-                        <p className="text-[10px] text-slate-500">{user.email}</p>
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="solid"
-                      onClick={() => updateApproval(user.id, true)}
-                      disabled={isProcessing}
-                    >
-                      Approve
-                    </Button>
-                  </div>
-                ))}
-                {pendingApprovals.length === 0 && (
-                  <p className="py-4 text-center text-sm text-slate-600">No pending approvals.</p>
-                )}
+        {activeTab === "staff-add" && (
+          <PremiumCard eyebrow="Staff" title="Add Staff" description="Send a registration link to a teacher.">
+            <form onSubmit={saveStaff} className="mt-4 max-w-2xl space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Full Name</label>
+                  <Input
+                    type="text"
+                    required
+                    className="mt-2"
+                    value={staffForm.name}
+                    onChange={(e) => setStaffForm({ ...staffForm, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Email</label>
+                  <Input
+                    type="email"
+                    required
+                    className="mt-2"
+                    value={staffForm.email}
+                    onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })}
+                  />
+                </div>
               </div>
-            </PremiumCard>
 
-            <PremiumCard eyebrow="Directory" title="Active Staff" description="Manage active teachers and experts.">
-              <div className="mt-4 space-y-3">
-                {users.filter(u => (u.role === "TEACHER" || u.role === "EXPERT") && u.isActive).map(user => (
-                  <div key={user.id} className="flex items-center justify-between rounded-2xl border border-white/5 bg-white/5 p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center text-xs font-bold text-slate-400">
-                        {user.name.charAt(0)}
+              <Button type="submit" variant="solid" size="md" disabled={isProcessing}>
+                Send Registration Link
+              </Button>
+            </form>
+          </PremiumCard>
+        )}
+
+        {isStaffViewTab && (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Active Teachers</p>
+                <p className="mt-2 text-3xl font-bold text-white">{activeStaff.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Invited</p>
+                <p className="mt-2 text-3xl font-bold text-accent-cyan">{pendingStaffInvitations.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Under Review</p>
+                <p className="mt-2 text-3xl font-bold text-amber-300">{submittedStaffInvitations.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Disabled</p>
+                <p className="mt-2 text-3xl font-bold text-rose-300">{inactiveStaff.length}</p>
+              </div>
+            </div>
+
+            <PremiumCard eyebrow="Directory" title="View Staff" description="Active teacher accounts and invitation progress.">
+              <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                {activeStaff.map((user) => (
+                  <div key={user.id} className="rounded-2xl border border-white/10 bg-ink-900/70 p-5 transition hover:border-accent-cyan/30">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-accent-purple to-accent-cyan p-[1px]">
+                          <div className="flex h-full w-full items-center justify-center rounded-[15px] bg-ink-950 text-sm font-bold text-white">
+                            {user.name.charAt(0)}
+                          </div>
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-bold text-white">{user.name}</h3>
+                          <p className="mt-1 text-xs text-slate-500">{user.email}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">{user.name}</p>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-accent-purple">{user.role}</p>
-                      </div>
+                      <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-300">
+                        Active
+                      </span>
                     </div>
-                    <button 
-                      onClick={() => updateApproval(user.id, false)}
-                      disabled={isProcessing}
-                      className="text-slate-500 hover:text-rose-400 transition-colors"
-                    >
-                      <UserX size={18} />
-                    </button>
+                    <div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4">
+                      <p className="text-xs text-slate-500">Joined {formatDateTime(user.createdAt)}</p>
+                      <button
+                        onClick={() => updateApproval(user.id, false)}
+                        disabled={isProcessing}
+                        className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20"
+                      >
+                        <UserX size={14} />
+                        Disable
+                      </button>
+                    </div>
                   </div>
                 ))}
+
+                {staffInvitations.filter((invitation) => invitation.status !== "APPROVED").map((invitation) => (
+                  <div key={invitation.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-sm font-bold text-white">{invitation.name}</h3>
+                        <p className="mt-1 text-xs text-slate-500">{invitation.email}</p>
+                      </div>
+                      <span className="rounded-full bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-300">
+                        {invitation.status.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <div className="mt-5 flex items-center gap-2 text-xs text-slate-500">
+                      <Mail size={14} />
+                      Invitation workflow pending
+                    </div>
+                  </div>
+                ))}
+
+                {activeStaff.length === 0 && staffInvitations.length === 0 && (
+                  <div className="col-span-full rounded-2xl border border-dashed border-white/10 p-10 text-center">
+                    <p className="text-sm font-semibold text-white">No staff records yet.</p>
+                    <p className="mt-2 text-sm text-slate-500">Use Add Staff to send your first teacher registration link.</p>
+                  </div>
+                )}
               </div>
             </PremiumCard>
           </div>
         )}
 
-        {activeTab === "students" && (
+        {isStaffApprovalsTab && (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <div className="flex items-center gap-3">
+                  <Clock className="h-5 w-5 text-amber-300" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Submitted</p>
+                </div>
+                <p className="mt-3 text-3xl font-bold text-white">{submittedStaffInvitations.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <div className="flex items-center gap-3">
+                  <RefreshCw className="h-5 w-5 text-accent-cyan" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Needs Action</p>
+                </div>
+                <p className="mt-3 text-3xl font-bold text-white">
+                  {staffInvitations.filter((invitation) => invitation.status === "REVISION_REQUESTED").length}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Approved</p>
+                </div>
+                <p className="mt-3 text-3xl font-bold text-white">
+                  {staffInvitations.filter((invitation) => invitation.status === "APPROVED").length}
+                </p>
+              </div>
+            </div>
+
+            <PremiumCard eyebrow="Review Queue" title="Staff Approvals" description="Review submitted profiles, documents, and admin decisions.">
+              <div className="mt-5 space-y-4">
+                {staffInvitations.map((invitation) => (
+                  <div key={invitation.id} className="rounded-2xl border border-white/10 bg-ink-900/70 p-5">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <h3 className="text-base font-bold text-white">{invitation.name}</h3>
+                          <span className={cn(
+                            "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
+                            invitation.status === "APPROVED" && "bg-emerald-500/10 text-emerald-300",
+                            invitation.status === "SUBMITTED" && "bg-amber-500/10 text-amber-300",
+                            invitation.status === "INVITED" && "bg-accent-cyan/10 text-accent-cyan",
+                            invitation.status === "REVISION_REQUESTED" && "bg-purple-500/10 text-purple-300",
+                            invitation.status === "REJECTED" && "bg-rose-500/10 text-rose-300",
+                          )}>
+                            {invitation.status.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">{invitation.email}</p>
+                      </div>
+
+                      {invitation.status === "SUBMITTED" && (
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="success" disabled={isProcessing} onClick={() => reviewStaffInvitation(invitation.id, "APPROVED")}>
+                            Approve
+                          </Button>
+                          <Button size="sm" variant="secondary" disabled={isProcessing} onClick={() => reviewStaffInvitation(invitation.id, "REVISION_REQUESTED")}>
+                            Request Revision
+                          </Button>
+                          <Button size="sm" variant="danger" disabled={isProcessing} onClick={() => reviewStaffInvitation(invitation.id, "REJECTED")}>
+                            Reject
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-5 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="grid gap-3 text-xs text-slate-400 sm:grid-cols-3">
+                        <span>{invitation.educationDetails ? "Education submitted" : "Education pending"}</span>
+                        <span>{invitation.personalDetails ? "Personal details submitted" : "Personal details pending"}</span>
+                        <span>{invitation.documentLinks?.length || 0} document(s)</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-2"
+                        onClick={() => setSelectedStaffInvitation(invitation)}
+                      >
+                        <Eye size={14} />
+                        View Details
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+
+                {staffInvitations.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center">
+                    <p className="text-sm font-semibold text-white">No staff applications yet.</p>
+                    <p className="mt-2 text-sm text-slate-500">Submitted teacher registrations will appear here for review.</p>
+                  </div>
+                )}
+              </div>
+            </PremiumCard>
+          </div>
+        )}
+
+        {activeTab === "student-add" && (
+          <PremiumCard eyebrow="Students" title="Add Student" description="Create a student login for direct portal access.">
+            <form onSubmit={saveStudent} className="mt-4 max-w-2xl space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Full Name</label>
+                  <Input
+                    type="text"
+                    required
+                    className="mt-2"
+                    value={studentForm.name}
+                    onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Email</label>
+                  <Input
+                    type="email"
+                    required
+                    className="mt-2"
+                    value={studentForm.email}
+                    onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Password</label>
+                <Input
+                  type="password"
+                  required
+                  className="mt-2"
+                  value={studentForm.password}
+                  onChange={(e) => setStudentForm({ ...studentForm, password: e.target.value })}
+                />
+              </div>
+
+              <Button type="submit" variant="solid" size="md" disabled={isProcessing}>
+                Create Student Login
+              </Button>
+            </form>
+          </PremiumCard>
+        )}
+
+        {isStudentTab && (
           <div className="space-y-6">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" />
@@ -447,6 +787,156 @@ export function AdminConsole() {
               </div>
             </div>
           </PremiumCard>
+        )}
+
+        {selectedStaffInvitation && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
+            <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-white/10 bg-ink-950 shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Staff Application</p>
+                  <h2 className="mt-2 text-2xl font-bold text-white">{selectedStaffInvitation.name}</h2>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-400">
+                    <span>{selectedStaffInvitation.email}</span>
+                    <span className="hidden h-1 w-1 rounded-full bg-slate-600 sm:block" />
+                    <span>{selectedStaffInvitation.role}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedStaffInvitation(null)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-400 transition hover:bg-white/10 hover:text-white"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="max-h-[calc(92vh-112px)] space-y-6 overflow-y-auto p-6">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Status</p>
+                    <div className="mt-3">
+                      <span className={cn(
+                        "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
+                        selectedStaffInvitation.status === "APPROVED" && "bg-emerald-500/10 text-emerald-300",
+                        selectedStaffInvitation.status === "SUBMITTED" && "bg-amber-500/10 text-amber-300",
+                        selectedStaffInvitation.status === "INVITED" && "bg-accent-cyan/10 text-accent-cyan",
+                        selectedStaffInvitation.status === "REVISION_REQUESTED" && "bg-purple-500/10 text-purple-300",
+                        selectedStaffInvitation.status === "REJECTED" && "bg-rose-500/10 text-rose-300",
+                      )}>
+                        {selectedStaffInvitation.status.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Submitted</p>
+                    <p className="mt-3 text-sm font-semibold text-white">
+                      {selectedStaffInvitation.submittedAt ? formatDateTime(selectedStaffInvitation.submittedAt) : "Not submitted yet"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Documents</p>
+                    <p className="mt-3 text-sm font-semibold text-white">
+                      {selectedStaffInvitation.documentLinks?.length || 0} file(s)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-5 lg:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                    <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
+                      <FileText size={14} />
+                      Education & Experience
+                    </div>
+                    <div className="grid gap-3">
+                      {parseSubmittedDetails(selectedStaffInvitation.educationDetails).map((item, index) => (
+                        <div key={`${item.label}-${index}`} className="rounded-xl bg-white/[0.04] p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.label}</p>
+                          <p className="mt-1 text-sm text-slate-200">{item.value}</p>
+                        </div>
+                      ))}
+                      {!selectedStaffInvitation.educationDetails && (
+                        <p className="text-sm text-slate-500">No education details submitted yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                    <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
+                      <AlertCircle size={14} />
+                      Personal Details
+                    </div>
+                    <div className="grid gap-3">
+                      {parseSubmittedDetails(selectedStaffInvitation.personalDetails).map((item, index) => (
+                        <div key={`${item.label}-${index}`} className="rounded-xl bg-white/[0.04] p-3">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.label}</p>
+                          <p className="mt-1 text-sm text-slate-200">{item.value}</p>
+                        </div>
+                      ))}
+                      {!selectedStaffInvitation.personalDetails && (
+                        <p className="text-sm text-slate-500">No personal details submitted yet.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Documents</p>
+                  {selectedStaffInvitation.documentLinks?.length ? (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {selectedStaffInvitation.documentLinks.map((rawLink, index) => {
+                        const [label, ...urlParts] = rawLink.split(": ");
+                        const url = urlParts.join(": ") || rawLink;
+
+                        return (
+                          <a
+                            key={`${rawLink}-${index}`}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 p-4 transition hover:bg-accent-cyan/20 hover:text-white"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink-950/70 text-accent-cyan group-hover:text-white">
+                                <FileText size={16} />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-accent-cyan group-hover:text-white">
+                                  {label && urlParts.length ? formatDocumentLabel(label) : `Document ${index + 1}`}
+                                </p>
+                                <p className="mt-1 truncate text-xs text-slate-500">Open uploaded file</p>
+                              </div>
+                            </div>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-500">No document links submitted.</p>
+                  )}
+                </div>
+
+                {selectedStaffInvitation.adminNotes && (
+                  <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-5 text-sm text-amber-100">
+                    Admin notes: {selectedStaffInvitation.adminNotes}
+                  </div>
+                )}
+
+                {selectedStaffInvitation.status === "SUBMITTED" && (
+                  <div className="flex flex-wrap justify-end gap-2 border-t border-white/10 pt-5">
+                    <Button size="sm" variant="success" disabled={isProcessing} onClick={() => reviewStaffInvitation(selectedStaffInvitation.id, "APPROVED")}>
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="secondary" disabled={isProcessing} onClick={() => reviewStaffInvitation(selectedStaffInvitation.id, "REVISION_REQUESTED")}>
+                      Request Revision
+                    </Button>
+                    <Button size="sm" variant="danger" disabled={isProcessing} onClick={() => reviewStaffInvitation(selectedStaffInvitation.id, "REJECTED")}>
+                      Reject
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </DashboardShell>

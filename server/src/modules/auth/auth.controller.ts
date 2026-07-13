@@ -23,6 +23,11 @@ export class AuthController {
     return this.authService.login(body);
   }
 
+  @Post("admin/login")
+  async adminLogin(@Body() body: PasswordLoginDto) {
+    return this.authService.adminLogin(body);
+  }
+
   @Post("refresh")
   async refresh(@Body() body: RefreshTokenDto) {
     return this.authService.refresh(body.refreshToken);

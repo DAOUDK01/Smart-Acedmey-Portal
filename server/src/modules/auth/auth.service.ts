@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException, ConflictException } from "@nestjs/common";
+import { Injectable, UnauthorizedException, BadRequestException, ConflictException, OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../../prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import { EmailService } from "./email.service";
@@ -16,12 +16,40 @@ import {
 } from "./auth.dto";
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
   ) {}
+
+  async onModuleInit() {
+    const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+    const password = process.env.ADMIN_PASSWORD?.trim();
+    const name = process.env.ADMIN_NAME?.trim() || "System Administrator";
+    if (!email || !password) {
+      throw new Error("ADMIN_EMAIL and ADMIN_PASSWORD must be configured");
+    }
+
+    await this.prisma.user.upsert({
+      where: { email },
+      update: {
+        name,
+        role: "ADMIN",
+        passwordHash: this.hashPassword(password),
+        isActive: true,
+        emailVerifiedAt: new Date(),
+      },
+      create: {
+        email,
+        name,
+        role: "ADMIN",
+        passwordHash: this.hashPassword(password),
+        isActive: true,
+        emailVerifiedAt: new Date(),
+      },
+    });
+  }
 
   private hashPassword(password: string): string {
     return createHash("sha256").update(password).digest("hex");
@@ -87,7 +115,11 @@ export class AuthService {
       where: { email: body.email.toLowerCase().trim() },
     });
 
-    if (!user?.passwordHash || user.passwordHash !== this.hashPassword(body.password)) {
+    if (
+      !user?.passwordHash ||
+      user.role === "ADMIN" ||
+      user.passwordHash !== this.hashPassword(body.password)
+    ) {
       throw new UnauthorizedException("Invalid email or password");
     }
 
@@ -101,7 +133,31 @@ export class AuthService {
     return { ...tokens, token: tokens.accessToken, user: safeUser };
   }
 
+  async adminLogin(body: PasswordLoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: body.email.toLowerCase().trim() },
+    });
+    if (
+      !user?.passwordHash ||
+      user.role !== "ADMIN" ||
+      user.passwordHash !== this.hashPassword(body.password)
+    ) {
+      throw new UnauthorizedException("Invalid admin credentials");
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+    const tokens = this.issueTokens(user);
+    const { passwordHash: _passwordHash, ...safeUser } = updatedUser;
+    return { ...tokens, token: tokens.accessToken, user: safeUser };
+  }
+
   async register(body: RegisterDto) {
+    if (body.role === "ADMIN") {
+      throw new BadRequestException("Admin accounts cannot be registered publicly");
+    }
     const existingUser = await this.prisma.user.findUnique({ where: { email: body.email } });
     if (existingUser) {
       throw new ConflictException("User already exists");
@@ -113,7 +169,7 @@ export class AuthService {
         name: body.name,
         role: body.role,
         passwordHash: this.hashPassword(body.password),
-        isActive: body.role === "ADMIN",
+        isActive: false,
       },
     });
 
@@ -165,6 +221,7 @@ export class AuthService {
   async requestLoginOtp(body: RequestLoginOtpDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
     if (!user) throw new UnauthorizedException("User not found");
+    if (user.role === "ADMIN") throw new UnauthorizedException("Use the admin login portal");
 
     const otp = this.generateOtp();
     await this.prisma.otpCode.create({
@@ -183,6 +240,7 @@ export class AuthService {
   async verifyLoginOtp(body: VerifyLoginOtpDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
     if (!user) throw new UnauthorizedException("User not found");
+    if (user.role === "ADMIN") throw new UnauthorizedException("Use the admin login portal");
 
     const otpRecord = await this.prisma.otpCode.findFirst({
       where: {
@@ -274,6 +332,10 @@ export class AuthService {
     let user = await this.prisma.user.findUnique({
       where: { email: payload.email },
     });
+
+    if (user?.role === "ADMIN") {
+      throw new UnauthorizedException("Use the admin login portal");
+    }
 
     if (!user) {
       // Create a new user if they don't exist

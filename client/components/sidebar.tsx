@@ -16,16 +16,22 @@ import {
   ShieldAlert,
   PlusCircle,
   Video,
-  FileText
+  FileText,
+  UserCheck,
+  ChevronDown,
+  LineChart,
+  ListChecks
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, usePathname } from "next/navigation";
+import { clearPortalSession } from "@/lib/session";
 
 interface SidebarItem {
   id: string;
   name: string;
   icon: any;
+  children?: SidebarItem[];
 }
 
 interface SidebarProps {
@@ -39,12 +45,44 @@ interface SidebarProps {
 const sidebarItems: Record<string, SidebarItem[]> = {
   admin: [
     { id: "overview", name: "Overview", icon: LayoutDashboard },
-    { id: "users", name: "Staff Management", icon: Users },
-    { id: "students", name: "Student Performance", icon: GraduationCap },
-    { id: "courses", name: "All Courses", icon: BookOpen },
-    { id: "create-course", name: "Create Course", icon: PlusCircle },
-    { id: "analytics", name: "System Analytics", icon: BarChart3 },
-    { id: "settings", name: "Settings", icon: Settings },
+    {
+      id: "staff-management",
+      name: "Staff",
+      icon: Users,
+      children: [
+        { id: "staff-add", name: "Add Staff", icon: PlusCircle },
+        { id: "staff-view", name: "View Staff", icon: UserCheck },
+        { id: "staff-approvals", name: "Approvals", icon: ListChecks },
+      ],
+    },
+    {
+      id: "student-management",
+      name: "Students",
+      icon: GraduationCap,
+      children: [
+        { id: "student-add", name: "Add Student", icon: PlusCircle },
+        { id: "student-view", name: "View Students", icon: GraduationCap },
+        { id: "student-performance", name: "Performance", icon: LineChart },
+      ],
+    },
+    {
+      id: "course-management",
+      name: "Courses",
+      icon: BookOpen,
+      children: [
+        { id: "create-course", name: "Add Course", icon: PlusCircle },
+        { id: "courses", name: "View Courses", icon: BookOpen },
+      ],
+    },
+    { id: "analytics", name: "Analytics", icon: BarChart3 },
+    {
+      id: "system",
+      name: "System",
+      icon: Settings,
+      children: [
+        { id: "settings", name: "Settings", icon: Settings },
+      ],
+    },
   ],
   teacher: [
     { id: "overview", name: "Dashboard", icon: LayoutDashboard },
@@ -77,13 +115,45 @@ const sidebarItems: Record<string, SidebarItem[]> = {
 
 export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const router = useRouter();
   const items = sidebarItems[role] || [];
 
+  useEffect(() => {
+    const activeParent = items.find((item) => item.children?.some((child) => child.id === activeItemId));
+
+    if (activeParent) {
+      setOpenGroups((current) => ({
+        ...current,
+        [activeParent.id]: true,
+      }));
+    }
+  }, [activeItemId, items]);
+
   const handleLogout = () => {
-    // We'll use the existing logout logic if available, 
-    // but for UI purposes, we'll just redirect to home for now.
-    router.push("/");
+    clearPortalSession();
+    router.replace(role === "admin" ? "/admin/login" : "/login");
+  };
+
+  const handleParentClick = (item: SidebarItem) => {
+    if (!item.children?.length) {
+      onItemClick(item.id);
+      return;
+    }
+
+    if (isCollapsed) {
+      onItemClick(item.children[0].id);
+      return;
+    }
+
+    setOpenGroups((current) => ({
+      ...current,
+      [item.id]: !current[item.id],
+    }));
+  };
+
+  const isItemActive = (item: SidebarItem) => {
+    return activeItemId === item.id || Boolean(item.children?.some((child) => child.id === activeItemId));
   };
 
   return (
@@ -125,46 +195,101 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
 
       {/* Navigation Items */}
       <nav className="mt-8 flex-1 space-y-1.5">
-        {items.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onItemClick(item.id)}
-            className={cn(
-              "group relative flex w-full items-center rounded-xl px-3 py-2.5 transition-all duration-200",
-              activeItemId === item.id 
-                ? "bg-gradient-to-r from-accent-purple/10 to-transparent text-white" 
-                : "hover:bg-white/5 hover:text-slate-200"
-            )}
-          >
-            {activeItemId === item.id && (
-              <motion.div
-                layoutId="active-nav"
-                className="absolute left-0 h-6 w-1 rounded-full bg-accent-purple"
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              />
-            )}
-            
-            <item.icon 
-              className={cn(
-                "h-5 w-5 shrink-0",
-                activeItemId === item.id ? "text-accent-purple" : "text-slate-400 group-hover:text-slate-200"
-              )} 
-            />
-            
-            <AnimatePresence>
-              {!isCollapsed && (
-                <motion.span
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -10 }}
-                  className="ml-3 text-sm font-medium"
-                >
-                  {item.name}
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </button>
-        ))}
+        {items.map((item) => {
+          const hasChildren = Boolean(item.children?.length);
+          const isActive = isItemActive(item);
+          const isOpen = Boolean(openGroups[item.id]);
+
+          return (
+            <div key={item.id} className="space-y-1">
+              <button
+                onClick={() => handleParentClick(item)}
+                className={cn(
+                  "group relative flex w-full items-center rounded-xl px-3 py-2.5 transition-all duration-200",
+                  isCollapsed ? "justify-center" : "justify-start",
+                  isActive
+                    ? "bg-gradient-to-r from-accent-purple/10 to-transparent text-white" 
+                    : "hover:bg-white/5 hover:text-slate-200"
+                )}
+              >
+                {isActive && (
+                  <motion.div
+                    layoutId="active-nav"
+                    className="absolute left-0 h-6 w-1 rounded-full bg-accent-purple"
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  />
+                )}
+                
+                <item.icon 
+                  className={cn(
+                    "h-5 w-5 shrink-0",
+                    isActive ? "text-accent-purple" : "text-slate-400 group-hover:text-slate-200"
+                  )} 
+                />
+                
+                <AnimatePresence>
+                  {!isCollapsed && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -10 }}
+                      className="ml-3 flex-1 truncate text-left text-sm font-medium"
+                    >
+                      {item.name}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+
+                {hasChildren && !isCollapsed && (
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 shrink-0 transition-transform duration-200",
+                      isOpen ? "rotate-180 text-slate-200" : "text-slate-500"
+                    )}
+                  />
+                )}
+              </button>
+
+              <AnimatePresence initial={false}>
+                {hasChildren && isOpen && !isCollapsed && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="ml-5 space-y-1 border-l border-white/10 pl-3">
+                      {item.children?.map((child) => {
+                        const isChildActive = activeItemId === child.id;
+
+                        return (
+                          <button
+                            key={child.id}
+                            onClick={() => onItemClick(child.id)}
+                            className={cn(
+                              "group flex w-full items-center rounded-lg px-3 py-2 text-left transition-all duration-200",
+                              isChildActive
+                                ? "bg-white/[0.08] text-white"
+                                : "text-slate-500 hover:bg-white/5 hover:text-slate-200"
+                            )}
+                          >
+                            <child.icon
+                              className={cn(
+                                "h-4 w-4 shrink-0",
+                                isChildActive ? "text-accent-cyan" : "text-slate-500 group-hover:text-slate-300"
+                              )}
+                            />
+                            <span className="ml-2 truncate text-sm font-medium">{child.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
       </nav>
 
       {/* Footer / User Profile */}

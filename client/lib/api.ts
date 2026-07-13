@@ -2,6 +2,7 @@ import {
   clearPortalSession,
   loadAccessToken,
   loadRefreshToken,
+  loadPortalSession,
   saveAccessToken,
   saveRefreshToken,
 } from "@/lib/session";
@@ -47,8 +48,9 @@ export async function authenticatedFetch(path: string, init?: RequestInit) {
     }
   }
   if (response.status === 401 && typeof window !== "undefined") {
+    const loginPath = loadPortalSession()?.role === "ADMIN" ? "/admin/login" : "/login";
     clearPortalSession();
-    window.location.replace("/login");
+    window.location.replace(loginPath);
   }
   return response;
 }

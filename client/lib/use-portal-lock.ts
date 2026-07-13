@@ -40,7 +40,7 @@ export function usePortalLock(expectedPath: PortalPath) {
       if (!sessionToUse) {
         setSession(null);
         setReady(true);
-        router.replace("/login");
+        router.replace(expectedPath === "/admin" ? "/admin/login" : "/login");
         return;
       }
 

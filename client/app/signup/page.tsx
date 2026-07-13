@@ -23,7 +23,6 @@ const roleOptions: Array<{ value: PortalRole; label: string }> = [
   { value: "TEACHER", label: "Teacher" },
   { value: "EXPERT", label: "Expert" },
   { value: "GUARDIAN", label: "Guardian" },
-  { value: "ADMIN", label: "Admin" },
 ];
 
 const roleLabels = Object.fromEntries(

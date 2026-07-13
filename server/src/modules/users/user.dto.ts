@@ -1,4 +1,4 @@
-import { IsString, IsEmail, IsOptional, IsEnum, IsBoolean } from "class-validator";
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsOptional, IsString } from "class-validator";
 import { UserRole } from "@prisma/client";
 
 export class CreateUserDto {
@@ -43,4 +43,46 @@ export class UpdateUserDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+}
+
+export class InviteStaffDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  name: string;
+
+  @IsEnum(UserRole)
+  role: UserRole;
+}
+
+export class CompleteStaffRegistrationDto {
+  @IsString()
+  token: string;
+
+  @IsString()
+  password: string;
+
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
+
+  @IsString()
+  educationDetails: string;
+
+  @IsString()
+  personalDetails: string;
+
+  @IsArray()
+  @IsOptional()
+  documentLinks?: string[];
+}
+
+export class ReviewStaffInvitationDto {
+  @IsString()
+  status: "APPROVED" | "REJECTED" | "REVISION_REQUESTED";
+
+  @IsString()
+  @IsOptional()
+  adminNotes?: string;
 }
