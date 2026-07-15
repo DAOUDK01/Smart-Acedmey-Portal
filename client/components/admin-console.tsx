@@ -34,6 +34,8 @@ type User = {
   role: Role;
   name: string;
   email: string;
+  phoneNumber?: string | null;
+  avatarUrl?: string | null;
   isActive: boolean;
   createdAt: string;
   lastLoginAt: string | null;
@@ -72,6 +74,8 @@ type StudentProgress = {
 type StaffInvitation = {
   id: string;
   email: string;
+  phoneNumber?: string | null;
+  avatarUrl?: string | null;
   name: string;
   role: "TEACHER";
   status: "INVITED" | "SUBMITTED" | "APPROVED" | "REJECTED" | "REVISION_REQUESTED";
@@ -87,6 +91,17 @@ type StaffInvitationResponse = StaffInvitation & {
   registrationLink: string;
   emailSent: boolean;
   emailError?: string;
+};
+
+type StaffCourseAssignment = {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  courseCode: string | null;
+  className: string;
+  classCode: string;
+  sectionName: string;
+  isActive: boolean;
 };
 
 function parseSubmittedDetails(details?: string | null) {
@@ -119,11 +134,15 @@ export function AdminConsole() {
   const [activeTab, setActiveTab] = useState("overview");
   const [users, setUsers] = useState<User[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [studentProgress, setStudentProgress] = useState<StudentProgress[]>([]);
   const [staffInvitations, setStaffInvitations] = useState<StaffInvitation[]>([]);
   const [selectedStaffInvitation, setSelectedStaffInvitation] = useState<StaffInvitation | null>(null);
+  const [selectedStaffUser, setSelectedStaffUser] = useState<User | null>(null);
+  const [staffCourseAssignments, setStaffCourseAssignments] = useState<StaffCourseAssignment[]>([]);
+  const [staffCoursesLoading, setStaffCoursesLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -162,6 +181,26 @@ export function AdminConsole() {
     if (!ready) return;
     loadAll();
   }, [ready]);
+
+  useEffect(() => {
+    const selectedEmail = selectedStaffUser?.email ?? selectedStaffInvitation?.email;
+    if (!selectedEmail) {
+      setStaffCourseAssignments([]);
+      return;
+    }
+    const staffUser = users.find((user) => user.email.toLowerCase() === selectedEmail.toLowerCase());
+    if (!staffUser) {
+      setStaffCourseAssignments([]);
+      return;
+    }
+    let active = true;
+    setStaffCoursesLoading(true);
+    apiFetch<StaffCourseAssignment[]>(`/api/admin/users/${staffUser.id}/assigned-courses`)
+      .then((assignments) => { if (active) setStaffCourseAssignments(assignments); })
+      .catch(() => { if (active) setStaffCourseAssignments([]); })
+      .finally(() => { if (active) setStaffCoursesLoading(false); });
+    return () => { active = false; };
+  }, [selectedStaffUser, selectedStaffInvitation, users]);
 
   async function loadAll() {
     try {
@@ -218,6 +257,17 @@ export function AdminConsole() {
     [staffInvitations],
   );
 
+  function viewStaffDetails(user: User) {
+    const application = staffInvitations.find(
+      (invitation) => invitation.email.toLowerCase() === user.email.toLowerCase(),
+    );
+    if (application) {
+      setSelectedStaffInvitation(application);
+      return;
+    }
+    setSelectedStaffUser(user);
+  }
+
   const pendingStaffInvitations = useMemo(
     () => staffInvitations.filter((invitation) => invitation.status === "INVITED" || invitation.status === "REVISION_REQUESTED"),
     [staffInvitations],
@@ -256,7 +306,52 @@ export function AdminConsole() {
       await loadAll();
       setActiveTab("courses");
     } catch (err) {
-      showStatus("Failed to create course.");
+      let message = "Failed to create course.";
+      if (err instanceof Error) {
+        try {
+          const responseBody = JSON.parse(err.message) as { message?: string | string[] };
+          if (Array.isArray(responseBody.message)) message = responseBody.message.join(", ");
+          else if (responseBody.message) message = responseBody.message;
+        } catch {
+          if (err.message) message = err.message;
+        }
+      }
+      showStatus(message);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function updateCourse(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingCourse?.title.trim()) return;
+    setIsProcessing(true);
+    try {
+      await apiFetch(`/api/admin/courses/${editingCourse.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: editingCourse.title.trim(),
+          code: editingCourse.code?.trim() || null,
+          description: editingCourse.description?.trim() || null,
+          level: editingCourse.level?.trim() || null,
+          isPublished: editingCourse.isPublished,
+        }),
+      });
+      setEditingCourse(null);
+      showStatus("Course updated successfully.");
+      await loadAll();
+    } catch (error) {
+      let message = "Failed to update course.";
+      if (error instanceof Error) {
+        try {
+          const responseBody = JSON.parse(error.message) as { message?: string | string[] };
+          if (Array.isArray(responseBody.message)) message = responseBody.message.join(", ");
+          else if (responseBody.message) message = responseBody.message;
+        } catch {
+          if (error.message) message = error.message;
+        }
+      }
+      showStatus(message);
     } finally {
       setIsProcessing(false);
     }
@@ -426,16 +521,19 @@ export function AdminConsole() {
                         Active
                       </span>
                     </div>
-                    <div className="mt-5 flex items-center justify-between border-t border-white/10 pt-4">
+                    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4">
                       <p className="text-xs text-slate-500">Joined {formatDateTime(user.createdAt)}</p>
-                      <button
-                        onClick={() => updateApproval(user.id, false)}
-                        disabled={isProcessing}
-                        className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20"
-                      >
-                        <UserX size={14} />
-                        Disable
-                      </button>
+                      <div className="flex gap-2">
+                        <button onClick={() => viewStaffDetails(user)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
+                        <button
+                          onClick={() => updateApproval(user.id, false)}
+                          disabled={isProcessing}
+                          className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20"
+                        >
+                          <UserX size={14} />
+                          Disable
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -451,9 +549,9 @@ export function AdminConsole() {
                         {invitation.status.replace(/_/g, " ")}
                       </span>
                     </div>
-                    <div className="mt-5 flex items-center gap-2 text-xs text-slate-500">
-                      <Mail size={14} />
-                      Invitation workflow pending
+                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
+                      <div className="flex items-center gap-2 text-xs text-slate-500"><Mail size={14} />Invitation workflow pending</div>
+                      <button onClick={() => setSelectedStaffInvitation(invitation)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
                     </div>
                   </div>
                 ))}
@@ -685,7 +783,12 @@ export function AdminConsole() {
                     )}>
                       {course.isPublished ? "Published" : "Draft"}
                     </span>
-                    <Button variant="ghost" size="sm" className="text-slate-500 hover:text-white">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-slate-500 hover:text-white"
+                      onClick={() => setEditingCourse({ ...course })}
+                    >
                       Edit
                     </Button>
                   </div>
@@ -785,6 +888,100 @@ export function AdminConsole() {
           <ClassesManagement mode="manage" teachers={activeStaff} courses={courses} />
         )}
 
+        {editingCourse && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-ink-900 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-white/10 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Course Catalog</p>
+                  <h2 className="mt-2 text-2xl font-bold text-white">Edit Course</h2>
+                  <p className="mt-1 text-sm text-slate-400">Update catalog details and publication status.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingCourse(null)}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <form onSubmit={updateCourse} className="space-y-5 p-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Course Title</label>
+                    <Input className="mt-2" required value={editingCourse.title} onChange={(e) => setEditingCourse({ ...editingCourse, title: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Course Code</label>
+                    <Input className="mt-2" value={editingCourse.code ?? ""} onChange={(e) => setEditingCourse({ ...editingCourse, code: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Level</label>
+                    <Select className="mt-2" value={editingCourse.level ?? ""} onChange={(e) => setEditingCourse({ ...editingCourse, level: e.target.value })}>
+                      <option value="">Not specified</option>
+                      <option value="Beginner">Beginner</option>
+                      <option value="Intermediate">Intermediate</option>
+                      <option value="Advanced">Advanced</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Publication Status</label>
+                    <Select className="mt-2" value={String(editingCourse.isPublished)} onChange={(e) => setEditingCourse({ ...editingCourse, isPublished: e.target.value === "true" })}>
+                      <option value="false">Draft</option>
+                      <option value="true">Published</option>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Description</label>
+                  <Textarea className="mt-2 min-h-32" value={editingCourse.description ?? ""} onChange={(e) => setEditingCourse({ ...editingCourse, description: e.target.value })} />
+                </div>
+                <div className="flex justify-end gap-3 border-t border-white/10 pt-5">
+                  <Button type="button" variant="ghost" onClick={() => setEditingCourse(null)}>Cancel</Button>
+                  <Button type="submit" variant="solid" disabled={isProcessing}>{isProcessing ? "Saving..." : "Save Changes"}</Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {selectedStaffUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-ink-900 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-white/10 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Staff Profile</p>
+                  <h2 className="mt-2 text-2xl font-bold text-white">{selectedStaffUser.name}</h2>
+                  <p className="mt-1 text-sm text-slate-400">Teacher account details</p>
+                </div>
+                <button onClick={() => setSelectedStaffUser(null)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"><X size={18} /></button>
+              </div>
+              <div className="space-y-5 p-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {[
+                    ["Full Name", selectedStaffUser.name],
+                    ["Email Address", selectedStaffUser.email],
+                    ["Phone Number", selectedStaffUser.phoneNumber || "Not provided"],
+                    ["Role", "Teacher"],
+                    ["Account Status", selectedStaffUser.isActive ? "Active" : "Disabled"],
+                    ["Joined", formatDateTime(selectedStaffUser.createdAt)],
+                    ["Last Login", selectedStaffUser.lastLoginAt ? formatDateTime(selectedStaffUser.lastLoginAt) : "Never"],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-xl border border-white/10 bg-white/[0.035] p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{label}</p>
+                      <p className="mt-2 break-words text-sm font-medium text-slate-200">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <StaffCoursesPanel assignments={staffCourseAssignments} loading={staffCoursesLoading} />
+                <div className="rounded-xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-sm text-amber-200">
+                  This staff account has no linked registration application, so personal, educational, and document details are unavailable.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {selectedStaffInvitation && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
             <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-white/10 bg-ink-950 shadow-2xl">
@@ -875,6 +1072,8 @@ export function AdminConsole() {
                   </div>
                 </div>
 
+                <StaffCoursesPanel assignments={staffCourseAssignments} loading={staffCoursesLoading} />
+
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Documents</p>
                   {selectedStaffInvitation.documentLinks?.length ? (
@@ -936,5 +1135,45 @@ export function AdminConsole() {
         )}
       </div>
     </DashboardShell>
+  );
+}
+
+function StaffCoursesPanel({ assignments, loading }: { assignments: StaffCourseAssignment[]; loading: boolean }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
+          <BookOpen size={15} /> Assigned Courses
+        </div>
+        <span className="rounded-full bg-accent-cyan/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-accent-cyan">
+          {assignments.filter((item) => item.isActive).length} Active
+        </span>
+      </div>
+      {loading ? (
+        <p className="text-sm text-slate-500">Loading course assignments...</p>
+      ) : assignments.length ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {assignments.map((assignment) => (
+            <div key={assignment.id} className="rounded-xl border border-accent-cyan/15 bg-accent-cyan/[0.04] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white">{assignment.courseTitle}</p>
+                  <p className="mt-1 text-xs text-slate-500">{assignment.courseCode || "No course code"}</p>
+                </div>
+                <span className={cn("h-2 w-2 shrink-0 rounded-full", assignment.isActive ? "bg-emerald-400" : "bg-slate-600")} />
+              </div>
+              <div className="mt-3 border-t border-white/10 pt-3">
+                <p className="text-xs font-medium text-accent-cyan">{assignment.className}</p>
+                <p className="mt-1 text-xs text-slate-500">Section {assignment.sectionName}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-white/10 py-7 text-center text-sm text-slate-500">
+          No courses are assigned to this staff member.
+        </div>
+      )}
+    </div>
   );
 }

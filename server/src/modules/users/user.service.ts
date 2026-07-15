@@ -311,6 +311,24 @@ export class UserService {
     });
   }
 
+  async getStaffAssignedCourses(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== "TEACHER") throw new NotFoundException("Staff member not found");
+
+    return this.prisma.$queryRaw<
+      { id: string; courseId: string; courseTitle: string; courseCode: string | null; className: string; classCode: string; sectionName: string; isActive: boolean }[]
+    >`
+      SELECT assignment."id", assignment."courseId", course."title" AS "courseTitle", course."code" AS "courseCode",
+        class."name" AS "className", class."code" AS "classCode", section."name" AS "sectionName", assignment."isActive"
+      FROM "SectionCourseAssignment" assignment
+      JOIN "Course" course ON course."id" = assignment."courseId"
+      JOIN "ClassSection" section ON section."id" = assignment."sectionId"
+      JOIN "AcademicClass" class ON class."id" = section."classId"
+      WHERE assignment."teacherId" = ${userId}
+      ORDER BY class."name", section."name", course."title"
+    `;
+  }
+
   async updateUser(id: string, body: UpdateUserDto) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException("User not found");

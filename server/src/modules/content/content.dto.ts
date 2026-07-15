@@ -1,8 +1,8 @@
-import { IsString, IsOptional, IsInt, IsBoolean, IsNumber, IsEnum } from "class-validator";
-import { UserRole } from "@prisma/client";
+import { IsString, IsOptional, IsInt, IsBoolean, IsNumber } from "class-validator";
 
 export class CreateCourseDto {
   @IsString()
+  @IsOptional()
   code: string;
 
   @IsString()
@@ -12,7 +12,7 @@ export class CreateCourseDto {
   @IsOptional()
   description?: string;
 
-  @IsEnum(UserRole)
+  @IsString()
   @IsOptional()
   level?: string;
 

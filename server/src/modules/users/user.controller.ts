@@ -93,6 +93,11 @@ export class UserController {
     return user;
   }
 
+  @Get(":id/assigned-courses")
+  getStaffAssignedCourses(@Param("id") id: string) {
+    return this.userService.getStaffAssignedCourses(id);
+  }
+
   @Get(":id")
   getUser(@Param("id") id: string) {
     return this.userService.getUser(id);

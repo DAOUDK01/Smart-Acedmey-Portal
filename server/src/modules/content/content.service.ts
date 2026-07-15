@@ -42,9 +42,12 @@ export class ContentService {
   async updateCourse(id: string, body: Record<string, unknown>) {
     const payload = body as Record<string, any>;
     const current = (await this.prisma.$queryRaw<any[]>`SELECT * FROM "Course" WHERE "id"=${id} LIMIT 1`)[0];
+    const code = Object.prototype.hasOwnProperty.call(payload, "code") ? payload.code || null : current.code;
+    const description = Object.prototype.hasOwnProperty.call(payload, "description") ? payload.description || null : current.description;
+    const level = Object.prototype.hasOwnProperty.call(payload, "level") ? payload.level || null : current.level;
     const rows = await this.prisma.$queryRaw<any[]>`
-      UPDATE "Course" SET "code"=${payload.code ?? current.code}, "title"=${payload.title ?? current.title},
-        "description"=${payload.description ?? current.description}, "level"=${payload.level ?? current.level},
+      UPDATE "Course" SET "code"=${code}, "title"=${payload.title ?? current.title},
+        "description"=${description}, "level"=${level},
         "isPublished"=${payload.isPublished ?? current.isPublished}, "sortOrder"=${payload.sortOrder ?? current.sortOrder}, "updatedAt"=NOW()
       WHERE "id"=${id} RETURNING *
     `;
