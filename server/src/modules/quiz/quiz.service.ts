@@ -70,7 +70,7 @@ export class QuizService {
         throw new Error(`Ollama request failed with status ${response.status}`);
       }
 
-      const raw = await response.json();
+      const raw = (await response.json()) as { response?: string };
       if (!raw?.response) {
         throw new Error("Ollama response missing expected field");
       }

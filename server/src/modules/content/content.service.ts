@@ -84,7 +84,11 @@ Return ONLY the transcript text without headings or markdown.`;
           body: JSON.stringify({ prompt, topic: title, format: "text" }),
         });
         if (response.ok) {
-          const raw = await response.json();
+          const raw = (await response.json()) as {
+            response?: string;
+            text?: string;
+            transcript?: string;
+          };
           const text = raw?.response ?? raw?.text ?? raw?.transcript;
           if (text) return String(text).trim();
         }
@@ -109,7 +113,7 @@ Return ONLY the transcript text without headings or markdown.`;
           }),
         });
         if (response.ok) {
-          const raw = await response.json();
+          const raw = (await response.json()) as { response?: string };
           if (raw?.response) return String(raw.response).trim();
         }
       } catch {
