@@ -2,7 +2,7 @@ import "reflect-metadata";
 import "dotenv/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
-import { ValidationPipe } from "@nestjs/common";
+import { RequestMethod, ValidationPipe } from "@nestjs/common";
 import * as express from "express";
 import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
@@ -15,7 +15,12 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
-  app.setGlobalPrefix("api");
+  app.setGlobalPrefix("api", {
+    exclude: [
+      { path: "", method: RequestMethod.GET },
+      { path: "health", method: RequestMethod.GET },
+    ],
+  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
