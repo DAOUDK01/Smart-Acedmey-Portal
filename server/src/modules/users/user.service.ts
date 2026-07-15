@@ -163,6 +163,28 @@ export class UserService {
     }
   }
 
+  async deletePendingStaffInvitation(id: string) {
+    await this.ensureStaffInvitationTable();
+
+    const deleted = await this.prisma.$queryRaw<{ id: string }[]>`
+      DELETE FROM "StaffInvitation"
+      WHERE "id" = ${id}
+        AND "status" IN (
+          'INVITED'::"StaffInvitationStatus",
+          'REVISION_REQUESTED'::"StaffInvitationStatus"
+        )
+      RETURNING "id"
+    `;
+
+    if (deleted.length === 0) {
+      throw new BadRequestException(
+        "Only pending or revision-requested staff invitations can be deleted",
+      );
+    }
+
+    return { success: true };
+  }
+
   async getStaffInvitationByToken(token: string) {
     await this.ensureStaffInvitationTable();
 

@@ -84,6 +84,11 @@ export class UserController {
     return this.userService.reviewStaffInvitation(id, body);
   }
 
+  @Delete("staff-invitations/:id")
+  deletePendingStaffInvitation(@Param("id") id: string) {
+    return this.userService.deletePendingStaffInvitation(id);
+  }
+
   @Get("by-email/:email")
   async getUserByEmail(@Param("email") email: string) {
     const user = await this.userService.getUserByEmail(decodeURIComponent(email));

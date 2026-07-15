@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
+  Trash2,
   X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -398,6 +399,31 @@ export function AdminConsole() {
     }
   }
 
+  async function deletePendingStaffInvitation(invitation: StaffInvitation) {
+    const confirmed = window.confirm(
+      `Delete the pending invitation for ${invitation.name} (${invitation.email})?`,
+    );
+    if (!confirmed) return;
+
+    setIsProcessing(true);
+    try {
+      await apiFetch(`/api/admin/users/staff-invitations/${invitation.id}`, {
+        method: "DELETE",
+      });
+      if (selectedStaffInvitation?.id === invitation.id) {
+        setSelectedStaffInvitation(null);
+      }
+      showStatus("Pending staff invitation deleted.");
+      await loadAll();
+    } catch (error) {
+      showStatus(
+        error instanceof Error ? error.message : "Failed to delete staff invitation.",
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
   async function saveStudent(e: React.FormEvent) {
     e.preventDefault();
     setIsProcessing(true);
@@ -551,7 +577,20 @@ export function AdminConsole() {
                     </div>
                     <div className="mt-5 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
                       <div className="flex items-center gap-2 text-xs text-slate-500"><Mail size={14} />Invitation workflow pending</div>
-                      <button onClick={() => setSelectedStaffInvitation(invitation)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button onClick={() => setSelectedStaffInvitation(invitation)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
+                        {(invitation.status === "INVITED" || invitation.status === "REVISION_REQUESTED") && (
+                          <button
+                            type="button"
+                            onClick={() => deletePendingStaffInvitation(invitation)}
+                            disabled={isProcessing}
+                            className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Trash2 size={14} />
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
