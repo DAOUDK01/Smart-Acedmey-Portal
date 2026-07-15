@@ -369,7 +369,7 @@ export function AdminConsole() {
       showStatus(
         result.emailSent
           ? "Staff invitation email sent."
-          : `Email failed, but invitation link was created: ${result.registrationLink}`,
+          : `Email failed${result.emailError ? `: ${result.emailError}` : ""}. Share this link manually: ${result.registrationLink}`,
       );
       setStaffForm({ name: "", email: "" });
       await loadAll();

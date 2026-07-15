@@ -1,43 +1,69 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import * as nodemailer from "nodemailer";
 
 @Injectable()
 export class EmailService {
-  private getTransporter() {
-    const host = process.env.SMTP_HOST;
-    const port = Number(process.env.SMTP_PORT || 587);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS?.replace(/\s+/g, "");
+  private readonly logger = new Logger(EmailService.name);
 
-    if (!host || !user || !pass) return null;
+  private getTransporter() {
+    const host = process.env.SMTP_HOST?.trim();
+    const port = Number(process.env.SMTP_PORT || 587);
+    const user = process.env.SMTP_USER?.trim();
+    const pass = process.env.SMTP_PASS?.replace(/\s+/g, "");
+    const secure = process.env.SMTP_SECURE
+      ? process.env.SMTP_SECURE.toLowerCase() === "true"
+      : port === 465;
+
+    const missing = [
+      !host && "SMTP_HOST",
+      !user && "SMTP_USER",
+      !pass && "SMTP_PASS",
+    ].filter(Boolean);
+
+    if (missing.length > 0) {
+      throw new Error(`Missing email configuration: ${missing.join(", ")}`);
+    }
+
+    if (!Number.isInteger(port) || port <= 0) {
+      throw new Error("SMTP_PORT must be a valid port number");
+    }
 
     return nodemailer.createTransport({
       host,
       port,
-      secure: port === 465,
+      secure,
       auth: { user, pass },
-      requireTLS: port === 587,
+      requireTLS: !secure,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
     });
   }
 
   async sendEmail(to: string, subject: string, html: string, text?: string) {
-    const transporter = this.getTransporter();
-
-    if (!transporter) {
-      console.log(`[EmailService] SMTP not configured. Email to ${to}: ${subject}`);
-      return;
-    }
-
     try {
-      await transporter.sendMail({
-        from: process.env.FROM_EMAIL || process.env.SMTP_USER,
+      const transporter = this.getTransporter();
+      const fromAddress = process.env.FROM_EMAIL?.trim() || process.env.SMTP_USER?.trim();
+      const fromName = process.env.FROM_NAME?.trim() || "SmartAcademy Portal";
+      const info = await transporter.sendMail({
+        from: { name: fromName, address: fromAddress! },
+        replyTo: process.env.REPLY_TO_EMAIL?.trim() || fromAddress,
         to,
         subject,
         html,
         text,
       });
+
+      this.logger.log(`Email accepted for ${to}; messageId=${info.messageId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown SMTP error";
+      const smtpError = error as { code?: string; command?: string; responseCode?: number };
+      this.logger.error(
+        `Email delivery failed for ${to}: ${message}` +
+          ` code=${smtpError.code || "unknown"}` +
+          ` command=${smtpError.command || "unknown"}` +
+          ` responseCode=${smtpError.responseCode || "unknown"}`,
+      );
       throw new BadRequestException(`Failed to send email: ${message}`);
     }
   }
