@@ -381,6 +381,36 @@ export function AdminConsole() {
     }
   }
 
+  async function resendStaffInvitation(invitation: StaffInvitation) {
+    setIsProcessing(true);
+    try {
+      const result = await apiFetch<StaffInvitationResponse>(
+        "/api/admin/users/staff-invitations",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: invitation.name,
+            email: invitation.email,
+            role: "TEACHER",
+          }),
+        },
+      );
+
+      showStatus(
+        result.emailSent
+          ? `Invitation email resent to ${invitation.email}.`
+          : `Email failed${result.emailError ? `: ${result.emailError}` : ""}. New registration link: ${result.registrationLink}`,
+      );
+      await loadAll();
+    } catch (error) {
+      showStatus(
+        error instanceof Error ? error.message : "Failed to resend staff invitation.",
+      );
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
   async function reviewStaffInvitation(invitationId: string, nextStatus: "APPROVED" | "REJECTED" | "REVISION_REQUESTED") {
     const adminNotes = nextStatus === "APPROVED" ? "" : window.prompt("Add notes for the staff email:") || "";
     setIsProcessing(true);
@@ -576,9 +606,20 @@ export function AdminConsole() {
                       </span>
                     </div>
                     <div className="mt-5 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
-                      <div className="flex items-center gap-2 text-xs text-slate-500"><Mail size={14} />Invitation workflow pending</div>
+                      <div className="flex items-center gap-2 text-xs text-slate-500"><Mail size={14} />Awaiting teacher registration</div>
                       <div className="flex flex-wrap justify-end gap-2">
                         <button onClick={() => setSelectedStaffInvitation(invitation)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
+                        {invitation.status === "INVITED" && (
+                          <button
+                            type="button"
+                            onClick={() => resendStaffInvitation(invitation)}
+                            disabled={isProcessing}
+                            className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Mail size={14} />
+                            Resend
+                          </button>
+                        )}
                         {(invitation.status === "INVITED" || invitation.status === "REVISION_REQUESTED") && (
                           <button
                             type="button"
