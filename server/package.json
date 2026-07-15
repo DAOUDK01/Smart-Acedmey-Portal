@@ -30,6 +30,7 @@
   },
   "scripts": {
     "start": "nest start",
+    "start:prod": "node dist/main.js",
     "start:dev": "nest start --watch",
     "test:key-client": "ts-node scripts/test-key-client.ts",
     "build": "nest build"
