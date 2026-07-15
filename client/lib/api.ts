@@ -7,27 +7,43 @@ import {
   saveRefreshToken,
 } from "@/lib/session";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
+export const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010"
+).replace(/\/$/, "");
+
+let refreshRequest: Promise<string | null> | null = null;
 
 export async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = loadRefreshToken();
   if (!refreshToken) return null;
 
-  const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-  });
-  if (!response.ok) return null;
+  if (refreshRequest) return refreshRequest;
 
-  const tokens = (await response.json()) as {
-    accessToken: string;
-    refreshToken: string;
-  };
-  saveAccessToken(tokens.accessToken);
-  saveRefreshToken(tokens.refreshToken);
-  return tokens.accessToken;
+  refreshRequest = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!response.ok) return null;
+
+      const tokens = (await response.json()) as {
+        accessToken: string;
+        refreshToken: string;
+      };
+      saveAccessToken(tokens.accessToken);
+      saveRefreshToken(tokens.refreshToken);
+      return tokens.accessToken;
+    } catch {
+      // A stopped or unreachable API must not become an unhandled UI error.
+      return null;
+    } finally {
+      refreshRequest = null;
+    }
+  })();
+
+  return refreshRequest;
 }
 
 export async function authenticatedFetch(path: string, init?: RequestInit) {

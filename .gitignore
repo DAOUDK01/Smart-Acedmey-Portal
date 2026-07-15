@@ -45,3 +45,7 @@ coverage/
 # Misc
 *.tsbuildinfo
 .turbo/
+~$D_SmartAcademy.docx
+.gitignore
+SRC_SmartAcademy_SRS.docx
+SDD_SmartAcademy.docx
