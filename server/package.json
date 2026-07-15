@@ -29,9 +29,11 @@
     "typescript": "^6.0.3"
   },
   "scripts": {
+    "postinstall": "prisma generate",
     "start": "nest start",
     "start:prod": "node dist/main.js",
     "start:dev": "nest start --watch",
+    "db:deploy": "prisma migrate deploy",
     "test:key-client": "ts-node scripts/test-key-client.ts",
     "build": "nest build"
   }
