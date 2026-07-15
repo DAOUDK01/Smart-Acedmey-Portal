@@ -8,10 +8,15 @@ import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
 
 async function bootstrap() {
-  const frontendUrl = process.env.FRONTEND_URL?.trim();
+  const configuredFrontendUrls =
+    process.env.FRONTEND_URLS ?? process.env.FRONTEND_URL ?? "";
+  const frontendOrigins = configuredFrontendUrls
+    .split(",")
+    .map((url) => url.trim().replace(/\/$/, ""))
+    .filter(Boolean);
 
-  if (!frontendUrl) {
-    throw new Error("FRONTEND_URL is not configured in the server environment");
+  if (frontendOrigins.length === 0) {
+    throw new Error("FRONTEND_URL or FRONTEND_URLS is not configured");
   }
 
   const app = await NestFactory.create(AppModule);
@@ -29,7 +34,19 @@ async function bootstrap() {
     }),
   );
   app.enableCors({
-    origin: frontendUrl,
+    origin(
+      origin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) {
+      // Requests without Origin are server-to-server calls and health checks.
+      if (!origin || frontendOrigins.includes(origin.replace(/\/$/, ""))) {
+        callback(null, true);
+        return;
+      }
+
+      console.warn(`[CORS] Rejected origin: ${origin}`);
+      callback(new Error("Origin is not allowed by CORS"), false);
+    },
     credentials: true,
   });
 
@@ -44,7 +61,10 @@ async function bootstrap() {
   app.use(
     "/uploads",
     (req: any, res: any, next: any) => {
-      res.header("Access-Control-Allow-Origin", frontendUrl);
+      const requestOrigin = String(req.headers.origin || "").replace(/\/$/, "");
+      if (frontendOrigins.includes(requestOrigin)) {
+        res.header("Access-Control-Allow-Origin", requestOrigin);
+      }
       res.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
       res.header("Access-Control-Allow-Headers", "Range, Origin, Content-Type, Accept");
       res.header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
