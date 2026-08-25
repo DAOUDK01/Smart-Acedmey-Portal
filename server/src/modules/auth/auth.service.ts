@@ -1,7 +1,8 @@
-import { Injectable, UnauthorizedException, BadRequestException, ConflictException, OnModuleInit } from "@nestjs/common";
+import { Injectable, UnauthorizedException, BadRequestException, ConflictException, OnModuleInit, ServiceUnavailableException } from "@nestjs/common";
 import { PrismaService } from "../../prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import { EmailService } from "./email.service";
+import { SystemService } from "../system/system.service";
 import { createHash, randomBytes } from "crypto";
 import {
   RegisterDto,
@@ -19,6 +20,7 @@ export class AuthService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    private readonly systemService: SystemService,
   ) {}
 
   async onModuleInit() {
@@ -119,6 +121,16 @@ export class AuthService implements OnModuleInit {
       user.passwordHash !== this.hashPassword(body.password)
     ) {
       throw new UnauthorizedException("Invalid email or password");
+    }
+
+    const { enabled, message } = await this.systemService.getMaintenanceInfo();
+    if (enabled) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        error: "Service Unavailable",
+        message,
+        maintenance: true,
+      });
     }
 
     const updatedUser = await this.prisma.user.update({

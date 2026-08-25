@@ -1,16 +1,36 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, randomBytes, randomUUID } from "crypto";
 import { PrismaService } from "../../prisma.service";
 import { EmailService } from "../auth/email.service";
+import { SystemService } from "../system/system.service";
+import { GuardianService } from "../guardian/guardian.service";
 import { CompleteAdmissionDto, RequestAdmissionDto, ReviewAdmissionDto } from "./admission.dto";
 
-type Admission = { id: string; name: string; email: string; desiredClassId: string; assignedSectionId: string | null; selectedCourseIds: string[]; status: string; tokenHash: string | null; expiresAt: Date | null };
+type Admission = { id: string; name: string; email: string; desiredClassId: string; assignedSectionId: string | null; selectedCourseIds: string[]; status: string; tokenHash: string | null; expiresAt: Date | null; guardianDetails: Record<string, unknown> | null };
 
 @Injectable()
 export class AdmissionService {
-  constructor(private readonly prisma: PrismaService, private readonly email: EmailService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: EmailService,
+    private readonly system: SystemService,
+    private readonly guardianService: GuardianService,
+  ) {}
+
+  private async assertOnline() {
+    const { enabled, message } = await this.system.getMaintenanceInfo();
+    if (enabled) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        error: "Service Unavailable",
+        message,
+        maintenance: true,
+      });
+    }
+  }
 
   async catalog() {
+    await this.assertOnline();
     return this.prisma.$queryRaw<any[]>`
       SELECT class."id", class."name", class."code", class."academicYear",
         COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id', course."id", 'title', course."title", 'code', course."code")) FILTER (WHERE course."id" IS NOT NULL), '[]'::jsonb) AS courses
@@ -24,6 +44,7 @@ export class AdmissionService {
   }
 
   async request(body: RequestAdmissionDto) {
+    await this.assertOnline();
     const email = body.email.trim().toLowerCase();
     if (!body.selectedCourseIds.length) throw new BadRequestException("Select at least one course");
     const classes = await this.prisma.$queryRaw<{ id: string }[]>`SELECT "id" FROM "AcademicClass" WHERE "id"=${body.desiredClassId} AND "isActive"=true`;
@@ -75,21 +96,41 @@ export class AdmissionService {
   }
 
   async byToken(token: string) {
+    await this.assertOnline();
     const rows = await this.prisma.$queryRaw<any[]>`SELECT admission."id",admission."name",admission."email",admission."status",admission."expiresAt",class."name" AS "className",section."name" AS "sectionName" FROM "StudentAdmission" admission JOIN "AcademicClass" class ON class."id"=admission."desiredClassId" LEFT JOIN "ClassSection" section ON section."id"=admission."assignedSectionId" WHERE admission."tokenHash"=${this.hash(token)} LIMIT 1`;
     if (!rows[0] || !rows[0].expiresAt || rows[0].expiresAt < new Date()) throw new NotFoundException("Registration link is invalid or expired");
     return rows[0];
   }
 
   async complete(body: CompleteAdmissionDto) {
+    await this.assertOnline();
     const found = await this.prisma.$queryRaw<Admission[]>`SELECT * FROM "StudentAdmission" WHERE "tokenHash"=${this.hash(body.token)} LIMIT 1`;
     const admission=found[0]; if(!admission || !admission.expiresAt || admission.expiresAt<new Date()) throw new NotFoundException("Registration link is invalid or expired");
     const passwordHash=createHash("sha256").update(body.password).digest("hex");
     await this.prisma.$executeRaw`INSERT INTO "User" ("id","role","name","email","passwordHash","phoneNumber","isActive","emailVerifiedAt","createdAt","updatedAt") VALUES (${randomUUID()},'STUDENT'::"UserRole",${admission.name},${admission.email},${passwordHash},${body.phoneNumber},false,NOW(),NOW(),NOW()) ON CONFLICT ("email") DO UPDATE SET "passwordHash"=${passwordHash},"phoneNumber"=${body.phoneNumber},"isActive"=false,"updatedAt"=NOW()`;
     await this.prisma.$executeRaw`UPDATE "StudentAdmission" SET "phoneNumber"=${body.phoneNumber},"personalDetails"=${JSON.stringify(body.personalDetails)}::jsonb,"guardianDetails"=${JSON.stringify(body.guardianDetails)}::jsonb,"educationDetails"=${JSON.stringify(body.educationDetails)}::jsonb,"documentLinks"=${JSON.stringify(body.documentLinks||[])}::jsonb,"status"='SUBMITTED'::"StudentAdmissionStatus","submittedAt"=NOW(),"updatedAt"=NOW() WHERE "id"=${admission.id}`;
-    return { success:true };
+    const updated = await this.get(admission.id);
+    const guardian = await this.guardianService.provisionStudentGuardian(
+      updated.email,
+      updated.name,
+      updated.guardianDetails ?? {},
+    );
+    return { success: true, guardian };
   }
 
-  async review(id:string,body:ReviewAdmissionDto){ const admission=await this.get(id); if(admission.status!=="SUBMITTED") throw new BadRequestException("Only submitted forms can be reviewed"); await this.prisma.$executeRaw`UPDATE "StudentAdmission" SET "status"=${body.status}::"StudentAdmissionStatus","adminNotes"=${body.adminNotes||null},"reviewedAt"=NOW(),"updatedAt"=NOW() WHERE "id"=${id}`; if(body.status==="APPROVED") await this.prisma.$executeRaw`UPDATE "User" SET "isActive"=true,"updatedAt"=NOW() WHERE "email"=${admission.email}`; await this.email.sendEmail(admission.email,`Admission ${body.status.toLowerCase()}`,`<p>Hello ${admission.name},</p><p>Your admission has been ${body.status.toLowerCase()}.</p><p>${body.adminNotes||""}</p>`); return {success:true}; }
+  async review(id:string,body:ReviewAdmissionDto){
+    const admission=await this.get(id);
+    if(admission.status!=="SUBMITTED") throw new BadRequestException("Only submitted forms can be reviewed");
+    await this.prisma.$executeRaw`UPDATE "StudentAdmission" SET "status"=${body.status}::"StudentAdmissionStatus","adminNotes"=${body.adminNotes||null},"reviewedAt"=NOW(),"updatedAt"=NOW() WHERE "id"=${id}`;
+    let guardianCredentials: { guardianEmail: string | null; emailSent: boolean; emailError?: string } | null = null;
+    if(body.status==="APPROVED"){
+      await this.prisma.$executeRaw`UPDATE "User" SET "isActive"=true,"updatedAt"=NOW() WHERE "email"=${admission.email}`;
+      guardianCredentials = await this.guardianService.issueCredentialsForStudent(admission.email);
+    }
+    await this.email.sendEmail(admission.email,`Admission ${body.status.toLowerCase()}`,`<p>Hello ${admission.name},</p><p>Your admission has been ${body.status.toLowerCase()}.</p><p>${body.adminNotes||""}</p>`);
+    return { success:true, guardianCredentials };
+  }
+
   private async get(id:string){const rows=await this.prisma.$queryRaw<Admission[]>`SELECT * FROM "StudentAdmission" WHERE "id"=${id} LIMIT 1`;if(!rows[0])throw new NotFoundException("Admission request not found");return rows[0];}
   private hash(value:string){return createHash("sha256").update(value).digest("hex");}
 }

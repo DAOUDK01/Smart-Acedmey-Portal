@@ -60,13 +60,26 @@ export class ContentController {
   }
 
   @Patch("lectures/:id")
-  updateLecture(@Param("id") id: string, @Body() body: Record<string, unknown>) {
+  updateLecture(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return this.contentService.updateLecture(id, body);
   }
 
   @Delete("lectures/:id")
   deleteLecture(@Param("id") id: string) {
     return this.contentService.deleteLecture(id);
+  }
+
+  @Get("lectures/processing")
+  listProcessingLectures() {
+    return this.contentService.listProcessingLectures();
+  }
+
+  @Post("lectures/:id/retry-processing")
+  retryLectureProcessing(@Param("id") id: string) {
+    return this.contentService.retryLectureProcessing(id);
   }
 
   @Get("checkpoints")
@@ -80,7 +93,10 @@ export class ContentController {
   }
 
   @Patch("checkpoints/:id")
-  updateCheckpoint(@Param("id") id: string, @Body() body: Record<string, unknown>) {
+  updateCheckpoint(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return this.contentService.updateCheckpoint(id, body);
   }
 
@@ -105,7 +121,10 @@ export class GuardianProgressController {
   }
 
   @Patch(":id")
-  updateProgress(@Param("id") id: string, @Body() body: Record<string, unknown>) {
+  updateProgress(
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
     return this.contentService.updateProgress(id, body);
   }
 
@@ -134,7 +153,9 @@ export class TeacherContentController {
           const originalName = file.originalname || "video.mp4";
           const extension = originalName.split(".").pop();
           const nameWithoutExt = originalName.replace(/\.[^/.]+$/, "");
-          const sanitizedBase = nameWithoutExt.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_");
+          const sanitizedBase = nameWithoutExt
+            .replace(/[^a-z0-9]/gi, "_")
+            .replace(/_+/g, "_");
           cb(null, `${Date.now()}-${sanitizedBase}.${extension}`);
         },
       }),
@@ -144,13 +165,18 @@ export class TeacherContentController {
     @Body() body: { title?: string; videoUrl?: string },
     @UploadedFile() file?: any,
   ) {
-    const fallbackTitle = file?.originalname?.replace(/\.[^/.]+$/, "") || "Uploaded lecture";
+    const fallbackTitle =
+      file?.originalname?.replace(/\.[^/.]+$/, "") || "Uploaded lecture";
     const title = body.title?.trim() || fallbackTitle;
 
     const uploadedUrl = file ? `/uploads/${file.filename}` : undefined;
-    const videoUrl = body.videoUrl?.trim() || uploadedUrl || title;
+    const videoUrl = uploadedUrl || body.videoUrl?.trim() || title;
 
-    const transcript = await this.contentService.generateTranscriptForVideo(title, videoUrl);
+    const transcript = await this.contentService.generateTranscriptForVideo(
+      title,
+      videoUrl,
+      file?.path,
+    );
 
     return { transcript, videoUrl };
   }

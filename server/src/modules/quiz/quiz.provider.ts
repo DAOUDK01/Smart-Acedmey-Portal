@@ -27,3 +27,49 @@ export function resolveOllamaUrl(): string | undefined {
     ? normalized
     : `${normalized}/api/generate`;
 }
+
+export type QuizAiProvider = "groq" | "openai" | null;
+
+/** Provider used for AI quiz generation (Groq preferred, OpenAI fallback). */
+export function resolveQuizAiProvider(): QuizAiProvider {
+  if (isConfiguredApiKey(process.env.GROQ_API_KEY)) {
+    return "groq";
+  }
+  if (isConfiguredApiKey(process.env.OPENAI_API_KEY)) {
+    return "openai";
+  }
+  return null;
+}
+
+export function resolveQuizAiModel(): string | undefined {
+  const provider = resolveQuizAiProvider();
+  if (provider === "groq") {
+    return process.env.GROQ_CHAT_MODEL?.trim() || "openai/gpt-oss-120b";
+  }
+  if (provider === "openai") {
+    return process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-4o-mini";
+  }
+  return undefined;
+}
+
+export function resolveQuizAiBaseUrl(): string | undefined {
+  const provider = resolveQuizAiProvider();
+  if (provider === "groq") {
+    return "https://api.groq.com/openai/v1/chat/completions";
+  }
+  if (provider === "openai") {
+    return "https://api.openai.com/v1/chat/completions";
+  }
+  return undefined;
+}
+
+export function resolveQuizAiApiKey(): string | undefined {
+  const provider = resolveQuizAiProvider();
+  if (provider === "groq") {
+    return process.env.GROQ_API_KEY;
+  }
+  if (provider === "openai") {
+    return process.env.OPENAI_API_KEY;
+  }
+  return undefined;
+}

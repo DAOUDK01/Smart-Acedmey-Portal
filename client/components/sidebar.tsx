@@ -25,8 +25,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { clearPortalSession } from "@/lib/session";
+import { Avatar } from "@/components/ui/avatar";
 
 interface SidebarItem {
   id: string;
@@ -114,6 +115,8 @@ const sidebarItems: Record<string, SidebarItem[]> = {
   guardian: [
     { id: "overview", name: "Dashboard", icon: LayoutDashboard },
     { id: "progress", name: "Student Progress", icon: BarChart3 },
+    { id: "lectures", name: "Lecture Recommendations", icon: Video },
+    { id: "quizzes", name: "Quiz Attempts", icon: FileQuestion },
     { id: "alerts", name: "Activity Alerts", icon: ShieldAlert },
   ]
 };
@@ -165,19 +168,21 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
     <motion.div
       initial={false}
       animate={{ width: isCollapsed ? 80 : 280 }}
+      transition={{ type: "spring", stiffness: 320, damping: 34 }}
       className={cn(
-        "relative flex h-screen flex-col border-r border-white/10 bg-ink-950 text-slate-400 transition-all duration-300 ease-in-out z-30 shrink-0",
+        "relative flex h-screen flex-col overflow-hidden border-r border-accent-purple/15 bg-[#f6f2fd]/60 text-slate-400 backdrop-blur-2xl z-30 shrink-0",
         isCollapsed ? "px-3" : "px-4"
       )}
     >
       {/* Logo Section */}
       <div className="flex h-20 items-center justify-between px-2">
-        <AnimatePresence mode="wait">
+        <AnimatePresence initial={false}>
           {!isCollapsed && (
             <motion.div
-              initial={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0, x: -14 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
+              exit={{ opacity: 0, x: -14 }}
+              transition={{ duration: 0.18 }}
               className="flex items-center gap-3"
             >
               <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-accent-purple to-accent-cyan p-[1px]">
@@ -192,7 +197,8 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
         
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/5 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white transition-all"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-all duration-200 hover:bg-accent-purple/[0.08] hover:text-slate-900 active:scale-90"
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
@@ -210,34 +216,35 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
               <button
                 onClick={() => handleParentClick(item)}
                 className={cn(
-                  "group relative flex w-full items-center rounded-xl px-3 py-2.5 transition-all duration-200",
+                  "group relative flex w-full items-center rounded-xl px-3 py-2.5 transition-all duration-150",
                   isCollapsed ? "justify-center" : "justify-start",
                   isActive
-                    ? "bg-gradient-to-r from-accent-purple/10 to-transparent text-white" 
-                    : "hover:bg-white/5 hover:text-slate-200"
+                    ? "bg-gradient-to-r from-accent-purple/20 via-accent-purple/10 to-transparent text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                    : "hover:bg-accent-purple/[0.06] hover:text-slate-900"
                 )}
               >
                 {isActive && (
                   <motion.div
                     layoutId="active-nav"
-                    className="absolute left-0 h-6 w-1 rounded-full bg-accent-purple"
-                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    className="absolute left-0 h-6 w-1 rounded-full bg-gradient-to-b from-accent-purple to-accent-cyan shadow-[0_0_12px_rgba(124,58,237,0.6)]"
+                    transition={{ type: "spring", stiffness: 350, damping: 30 }}
                   />
                 )}
                 
                 <item.icon 
                   className={cn(
-                    "h-5 w-5 shrink-0",
-                    isActive ? "text-accent-purple" : "text-slate-400 group-hover:text-slate-200"
+                    "h-5 w-5 shrink-0 transition-transform duration-150 group-hover:scale-110",
+                    isActive ? "text-white" : "text-slate-400 group-hover:text-slate-900"
                   )} 
                 />
                 
-                <AnimatePresence>
+                <AnimatePresence initial={false}>
                   {!isCollapsed && (
                     <motion.span
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -10 }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.12 }}
                       className="ml-3 flex-1 truncate text-left text-sm font-medium"
                     >
                       {item.name}
@@ -248,8 +255,8 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
                 {hasChildren && !isCollapsed && (
                   <ChevronDown
                     className={cn(
-                      "h-4 w-4 shrink-0 transition-transform duration-200",
-                      isOpen ? "rotate-180 text-slate-200" : "text-slate-500"
+                      "h-4 w-4 shrink-0 transition-transform duration-150",
+                      isOpen ? "rotate-180 text-slate-600" : "text-slate-500"
                     )}
                   />
                 )}
@@ -261,9 +268,10 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
                     className="overflow-hidden"
                   >
-                    <div className="ml-5 space-y-1 border-l border-white/10 pl-3">
+                    <div className="ml-5 space-y-1 border-l border-accent-purple/15 pl-3">
                       {item.children?.map((child) => {
                         const isChildActive = activeItemId === child.id;
 
@@ -274,14 +282,14 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
                             className={cn(
                               "group flex w-full items-center rounded-lg px-3 py-2 text-left transition-all duration-200",
                               isChildActive
-                                ? "bg-white/[0.08] text-white"
-                                : "text-slate-500 hover:bg-white/5 hover:text-slate-200"
+                                ? "bg-white/[0.09] text-white"
+                                : "text-slate-500 hover:bg-accent-purple/[0.06] hover:text-slate-900"
                             )}
                           >
                             <child.icon
                               className={cn(
                                 "h-4 w-4 shrink-0",
-                                isChildActive ? "text-accent-cyan" : "text-slate-500 group-hover:text-slate-300"
+                                isChildActive ? "text-white" : "text-slate-500 group-hover:text-slate-700"
                               )}
                             />
                             <span className="ml-2 truncate text-sm font-medium">{child.name}</span>
@@ -298,16 +306,12 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
       </nav>
 
       {/* Footer / User Profile */}
-      <div className="mb-6 mt-auto space-y-2 border-t border-white/10 pt-6">
+      <div className="mb-6 mt-auto space-y-2 border-t border-accent-purple/15 pt-6">
         <div className={cn(
           "flex items-center gap-3 px-2",
           isCollapsed ? "justify-center" : "justify-start"
         )}>
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-accent-purple to-accent-cyan p-[1px] shrink-0">
-            <div className="flex h-full w-full items-center justify-center rounded-[11px] bg-ink-900 text-sm font-bold text-white">
-              {userName ? userName.charAt(0).toUpperCase() : "JD"}
-            </div>
-          </div>
+          <Avatar name={userName} size="md" />
           
           {!isCollapsed && (
             <div className="flex flex-col overflow-hidden">
@@ -320,11 +324,11 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
         <button
           onClick={handleLogout}
           className={cn(
-            "group flex w-full items-center rounded-xl px-3 py-2.5 text-slate-400 transition-all hover:bg-rose-500/10 hover:text-rose-400",
+            "group flex w-full items-center rounded-xl px-3 py-2.5 text-slate-400 transition-all duration-200 hover:bg-rose-500/10 hover:text-rose-600 active:scale-[0.98]",
             isCollapsed ? "justify-center" : "justify-start"
           )}
         >
-          <LogOut className="h-5 w-5 shrink-0" />
+          <LogOut className="h-5 w-5 shrink-0 text-rose-500 transition-transform duration-200 group-hover:-translate-x-0.5" />
           {!isCollapsed && <span className="ml-3 text-sm font-medium">Log out</span>}
         </button>
       </div>

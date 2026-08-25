@@ -21,6 +21,12 @@ enum QuizStatus {
   EDITED
 }
 
+enum MockExamStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 enum OtpPurpose {
   EMAIL_VERIFICATION
   LOGIN_VERIFICATION
@@ -208,6 +214,12 @@ model Lecture {
   videoProvider String?
   isCheckpointLocked Boolean @default(true)
   publishedAt DateTime?
+  sourceType  String?
+  hlsMasterUrl String?
+  thumbnailUrl String?
+  processingStatus String?
+  processingProgress Int?
+  processingError String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -247,6 +259,7 @@ model QuizQuestion {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   quizAttempts  QuizAttempt[]
+  mockExamQuestions MockExamQuestion[]
 }
 
 model QuizAttempt {
@@ -261,6 +274,46 @@ model QuizAttempt {
   submittedAt DateTime @default(now())
   createdAt   DateTime @default(now())
   quiz        QuizQuestion @relation(fields: [quizId], references: [id], onDelete: Cascade)
+}
+
+model MockExam {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  courseId        String?
+  durationSeconds Int?     // null = no timer; student can submit anytime
+  startsAt        DateTime? // availability window start (null = available immediately)
+  endsAt          DateTime? // availability window end (null = no deadline)
+  status          MockExamStatus @default(DRAFT)
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  questions       MockExamQuestion[]
+  attempts        MockExamAttempt[]
+}
+
+model MockExamQuestion {
+  id         String       @id @default(cuid())
+  examId     String
+  questionId String
+  sortOrder  Int          @default(0)
+  createdAt  DateTime     @default(now())
+  exam       MockExam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  question   QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, questionId])
+}
+
+model MockExamAttempt {
+  id             String   @id @default(cuid())
+  examId         String
+  studentId      String
+  score          Float
+  totalQuestions Int
+  passed         Boolean  @default(false)
+  submittedAt    DateTime @default(now())
+  createdAt      DateTime @default(now())
+  exam           MockExam @relation(fields: [examId], references: [id], onDelete: Cascade)
 }
 
 model StudentProgress {
@@ -279,4 +332,48 @@ model StudentProgress {
   completedLectures  Int      @default(0)
   failedQuizzes      Int      @default(0)
   updatedAt          DateTime @updatedAt
+}
+
+model StudentInteraction {
+  id              String   @id @default(cuid())
+  studentId       String
+  lectureId       String
+  interactionDate DateTime @default(now())
+  clickCount      Int      @default(1)
+  watchPercent    Float?   // 0-100 watch progress when the lecture was left
+  createdAt       DateTime @default(now())
+
+  @@index([studentId, interactionDate])
+  @@index([lectureId])
+  @@index([interactionDate])
+}
+
+model ResourceTransition {
+  id             String   @id @default(cuid())
+  resourceId     String
+  nextResourceId String
+  count          Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([resourceId, nextResourceId])
+  @@index([resourceId, count])
+}
+
+model GuardianStudentLink {
+  id            String   @id @default(cuid())
+  guardianId    String
+  studentId     String
+  guardianEmail String
+  studentEmail  String
+  createdAt     DateTime @default(now())
+
+  @@unique([guardianId, studentId])
+  @@index([guardianId])
+  @@index([studentEmail])
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

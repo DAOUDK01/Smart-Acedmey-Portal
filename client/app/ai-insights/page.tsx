@@ -36,7 +36,7 @@ export default function AiInsightsPage() {
             ].map((item, index) => (
               <div
                 key={item}
-                className="rounded-2xl border border-white/10 bg-ink-900 p-3 text-center"
+                className="rounded-2xl border border-accent-purple/15 bg-ink-900 p-3 text-center"
                 style={{ opacity: 0.55 + (index % 4) * 0.1 }}
               >
                 <p className="text-sm text-white">{item}</p>
@@ -49,7 +49,7 @@ export default function AiInsightsPage() {
           title="AI insight stream"
           description="Observability-style cards for performance trends and anomaly-ready data later."
         >
-          <div className="space-y-3 text-sm text-slate-300">
+          <div className="space-y-3 text-sm text-slate-600">
             <p>Quiz accuracy improved by 12% after lecture review sessions.</p>
             <p>Checkpoint completion spikes around evening study hours.</p>
             <p>Recursion remains the highest friction topic cluster.</p>
@@ -83,7 +83,7 @@ export default function AiInsightsPage() {
               (label, index) => (
                 <div
                   key={label}
-                  className="rounded-2xl border border-white/10 bg-ink-900 px-4 py-3 text-sm text-slate-300"
+                  className="rounded-2xl border border-accent-purple/15 bg-ink-900 px-4 py-3 text-sm text-slate-600"
                 >
                   {label} - {100 - index * 18}% of cohort
                 </div>
@@ -96,7 +96,7 @@ export default function AiInsightsPage() {
           title="AI readiness"
           description="This phase stays simple now and leaves room for advanced analytics later."
         >
-          <div className="rounded-[24px] border border-white/10 bg-ink-900 p-5 text-sm text-slate-300">
+          <div className="rounded-[24px] border border-accent-purple/15 bg-ink-900 p-5 text-sm text-slate-600">
             <p>Current phase: rule-based intelligence.</p>
             <p className="mt-2">
               Future phase: clustering, recommendations, and anomaly detection.

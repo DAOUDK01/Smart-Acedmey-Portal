@@ -86,3 +86,25 @@ export class ReviewStaffInvitationDto {
   @IsOptional()
   adminNotes?: string;
 }
+
+export class UpdateMeDto {
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
+
+  @IsString()
+  @IsOptional()
+  avatarUrl?: string;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  currentPassword: string;
+
+  @IsString()
+  newPassword: string;
+}

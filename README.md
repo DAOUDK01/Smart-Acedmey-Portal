@@ -104,7 +104,7 @@ node prisma/seed.js
 The seed script creates starter accounts:
 
 | Role    | Email                      | Password    |
-|---------|----------------------------|-------------|
+| ------- | -------------------------- | ----------- |
 | Admin   | admin@smartacademy.local   | Admin@123   |
 | Teacher | teacher@smartacademy.local | Teacher@123 |
 | Expert  | expert@smartacademy.local  | Expert@123  |
@@ -154,12 +154,63 @@ npm run dev
 
 ---
 
+# Machine Learning Service (Recommendations)
+
+A small FastAPI microservice that wraps the trained Random Forest recommender
+(model + features are loaded once at startup).
+
+## Setup
+
+Requirements: Python 3.10+ and `pip`.
+
+```bash
+cd server/src/ml/service
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+```
+
+## Start the service
+
+From the project root (recommended):
+
+```bash
+npm run start:ml
+```
+
+Or directly from `server/src/ml/service/`:
+
+```bash
+.venv\Scripts\activate
+uvicorn app:app --host 127.0.0.1 --port 8005
+```
+
+The service runs on **http://localhost:8005** and exposes:
+
+| Method | Path        | Description                                                |
+| ------ | ----------- | ---------------------------------------------------------- |
+| GET    | `/health`   | Liveness + whether the model is loaded                     |
+| GET    | `/features` | Exact model feature list (in training order) and threshold |
+| POST   | `/predict`  | Predict REWATCH / NEXT_VIDEO from raw inputs               |
+
+Run tests:
+
+```bash
+cd server/src/ml/service
+pytest tests -v
+```
+
+See `server/src/ml/service/README.md` for the full API reference.
+
+---
+
 # URLs
 
-| Service     | URL                        |
-|-------------|----------------------------|
-| Frontend    | http://localhost:3000      |
-| Backend API | http://localhost:4010      |
+| Service     | URL                   |
+| ----------- | --------------------- |
+| Frontend    | http://localhost:3000 |
+| Backend API | http://localhost:4010 |
+| ML Service  | http://localhost:8005 |
 
 ---
 
@@ -175,6 +226,7 @@ npm install
 npm run dev              # both client + server
 npm run dev:client       # frontend only
 npm run dev:server       # backend only
+npm run start:ml         # ML recommendation service (port 8005)
 
 # Production build
 npm run build

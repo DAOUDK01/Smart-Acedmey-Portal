@@ -74,6 +74,11 @@ export class StudentQuizController {
     return this.quizService.listQuizQuestionsByStatus(QuizStatus.APPROVED);
   }
 
+  @Get("mock-exams")
+  listApprovedMockExams() {
+    return this.quizService.listApprovedMockExams();
+  }
+
   @Get("questions/:id")
   getQuizQuestion(@Param("id") id: string) {
     return this.quizService.getQuizQuestion(id);

@@ -1,83 +1,112 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { PremiumCard } from "@/components/premium-card";
 import { usePortalLock } from "@/lib/use-portal-lock";
-import { formatDateTime } from "@/lib/portal-data";
+import { formatDate, formatDateTime } from "@/lib/portal-data";
 import { PendingApprovalBanner } from "@/components/pending-approval-banner";
+import MaintenanceScreen from "@/components/maintenance-screen";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
 import { apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { CheckCircle2, XCircle, PlayCircle, ShieldAlert } from "lucide-react";
 
-type Progress = {
-  id: string;
-  studentId: string;
-  guardianName: string | null;
-  currentCourseId: string | null;
-  currentLectureId: string | null;
-  avgScore: number;
-  weakTopics: unknown;
-  streakDays: number;
-  lastActivityAt: string | null;
-  completedCheckpoints: number;
-  lockedCheckpoints: number;
-  progressPercentage: number;
-  completedLectures: number;
-  failedQuizzes: number;
+type DashboardData = {
+  guardian: { id: string; name: string; email: string };
+  student: { id: string; name: string; email: string } | null;
+  progress: {
+    studentId: string;
+    guardianName: string | null;
+    currentCourseId: string | null;
+    currentLectureId: string | null;
+    avgScore: number;
+    weakTopics: string[];
+    streakDays: number;
+    lastActivityAt: string | null;
+    completedCheckpoints: number;
+    lockedCheckpoints: number;
+    progressPercentage: number;
+    completedLectures: number;
+    failedQuizzes: number;
+  } | null;
+  weakTopics: string[];
+  courses: {
+    id: string;
+    title: string;
+    code: string | null;
+    description: string | null;
+    avgScore: number;
+    quizCount: number;
+    attemptCount: number;
+    passed: number;
+    failed: number;
+    recommendation: string;
+  }[];
+  lectures: {
+    id: string;
+    title: string;
+    courseId: string;
+    lectureOrder: number;
+    durationMinutes: number | null;
+    videoUrl: string;
+    transcript: string | null;
+    publishedAt: string | null;
+    attempted: boolean;
+    avgScore: number;
+    attemptCount: number;
+    failed: number;
+    recommendation: string;
+  }[];
+  attempts: {
+    id: string;
+    quizId: string;
+    question: string;
+    topic: string | null;
+    difficulty: string;
+    lectureId: string | null;
+    courseId: string | null;
+    score: number;
+    passed: boolean;
+    responseTime: number;
+    attemptNumber: number;
+    submittedAt: string;
+  }[];
 };
 
-type QuizAttempt = {
-  id: string;
-  studentId: string;
-  quizId: string;
-  score: number;
-  responseTime: number;
-  passed: boolean;
-  submittedAt: string;
+const difficultyBadge: Record<string, string> = {
+  easy: "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm",
+  medium: "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm",
+  hard: "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm",
 };
 
 export default function GuardianPage() {
-  const { ready, isApproved } = usePortalLock("/guardian");
+  const { ready, session, isApproved, maintenance } = usePortalLock("/guardian");
   const [activeTab, setActiveTab] = useState("overview");
-  const [studentId, setStudentId] = useState("student-1");
-  const [searchId, setSearchId] = useState("student-1");
-  const [studentProgress, setStudentProgress] = useState<Progress | null>(null);
-  const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<string | null>(null);
-  const [selectedSubject, setSelectedSubject] = useState("all");
 
-  // Load progress and attempts
-  const fetchData = async (sId: string) => {
+  const loadDashboard = async () => {
+    if (!session?.email) return;
     setLoading(true);
     setStatus(null);
     try {
-      // Fetch all progress records
-      const progressRecords = await apiFetch<Progress[]>(
-        "/api/guardian/progress",
+      const result = await apiFetch<DashboardData>(
+        `/api/guardian/dashboard?email=${encodeURIComponent(session.email)}`,
       );
-      const matched = progressRecords.find(
-        (r) => r.studentId.toLowerCase() === sId.trim().toLowerCase(),
-      );
-
-      if (matched) {
-        setStudentProgress(matched);
-      } else {
-        setStudentProgress(null);
-        setStatus("No progress record found for that student ID.");
+      setData(result);
+      if (!result.student) {
+        setStatus(
+          "No student is linked to this guardian account yet. A guardian link is created automatically when a student completes admission registration with your email.",
+        );
       }
-
-      const attemptData = await apiFetch<QuizAttempt[]>(
-        `/api/admin/quiz/attempts?studentId=${encodeURIComponent(sId.trim())}`,
-      );
-      setAttempts(attemptData);
     } catch (error) {
       setStatus(
         error instanceof Error
           ? error.message
-          : "Failed to load student progress record.",
+          : "Failed to load guardian dashboard.",
       );
     } finally {
       setLoading(false);
@@ -86,458 +115,634 @@ export default function GuardianPage() {
 
   useEffect(() => {
     if (!ready || !isApproved) return;
-    void fetchData(studentId);
-  }, [ready, isApproved, studentId]);
+    void loadDashboard();
+  }, [ready, isApproved, session?.email]);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchId.trim()) {
-      setStudentId(searchId.trim());
-    }
-  };
+  const atRiskLectures = useMemo(
+    () =>
+      data?.lectures.filter(
+        (lecture) => lecture.attempted && lecture.avgScore < 50,
+      ) ?? [],
+    [data],
+  );
 
-  // Engagement Score calculation
-  const engagementMetrics = useMemo(() => {
-    if (!studentProgress)
-      return { score: 0, status: "Unknown", color: "text-slate-400" };
+  const failedAttempts = useMemo(
+    () => data?.attempts.filter((attempt) => !attempt.passed) ?? [],
+    [data],
+  );
 
-    // Penalize for failed quizzes and response time anomalies
-    const speedAnomalies = attempts.filter(
-      (att) => att.responseTime < 3,
-    ).length;
-    const baseScore = Math.max(
-      0,
-      100 - studentProgress.failedQuizzes * 8 - speedAnomalies * 12,
-    );
+  const rapidAttempts = useMemo(
+    () => data?.attempts.filter((attempt) => attempt.responseTime < 3) ?? [],
+    [data],
+  );
 
-    let state = "High Engagement";
-    let color = "text-cyan-300";
-    if (baseScore < 50) {
-      state = "Critical Inattention Risk";
-      color = "text-rose-400";
-    } else if (baseScore < 75) {
-      state = "Moderate Consistency Alert";
-      color = "text-amber-400";
-    }
+  if (!ready) return null;
 
-    return {
-      score: baseScore,
-      status: state,
-      color,
-    };
-  }, [studentProgress, attempts]);
-
-  // Weak topics parsing
-  const weakTopics = useMemo(() => {
-    if (!studentProgress) return [];
-    if (Array.isArray(studentProgress.weakTopics)) {
-      return studentProgress.weakTopics as string[];
-    }
-    try {
-      return JSON.parse(studentProgress.weakTopics as string) as string[];
-    } catch {
-      return [];
-    }
-  }, [studentProgress]);
-
-  // Dynamic recommendations based on weak topics
-  const recommendations = useMemo(() => {
-    if (weakTopics.length === 0) {
-      return [
-        {
-          title: "Advanced DSA practice",
-          type: "Challenge Assignment",
-          desc: "Keep up the excellent work! Review advanced algorithms to push further.",
-        },
-      ];
-    }
-
-    return weakTopics.map((topic) => {
-      if (topic.toLowerCase().includes("recursion")) {
-        return {
-          title: "Recursion Basics & Call Stacks",
-          type: "Personalized Video Lecture",
-          desc: "A 5-minute visual explanation of recursive structures and terminal states.",
-        };
-      }
-      if (
-        topic.toLowerCase().includes("memory") ||
-        topic.toLowerCase().includes("stack")
-      ) {
-        return {
-          title: "Understanding Pointer Arithmetic & Stack Memory",
-          type: "Interactive Sandbox Exercises",
-          desc: "Practice visualizing compiler storage blocks in memory lanes.",
-        };
-      }
-      return {
-        title: `Intermediate Review on ${topic}`,
-        type: "Concept Practice Quiz",
-        desc: `Targeted 3-question review session to build confidence on ${topic}.`,
-      };
-    });
-  }, [weakTopics]);
-
-  const subjectBreakdown = useMemo(() => {
-    const topics = weakTopics.length ? weakTopics : ["Mathematics", "Science", "English"];
-    return topics.map((topic, index) => {
-      const scoreBase = studentProgress?.avgScore ?? 0;
-      const progressBase = studentProgress?.progressPercentage ?? 0;
-      return {
-        subject: topic,
-        score: Math.max(30, Math.min(98, Math.round(scoreBase - index * 6))),
-        progress: Math.max(20, Math.min(100, Math.round(progressBase - index * 8 + 10))),
-        recommendation:
-          index === 0
-            ? "Schedule one revision session and review the latest lecture transcript."
-            : "Keep daily practice active and complete one checkpoint quiz this week.",
-      };
-    });
-  }, [studentProgress, weakTopics]);
-
-  const filteredSubjects = useMemo(() => {
-    if (selectedSubject === "all") {
-      return subjectBreakdown;
-    }
-    return subjectBreakdown.filter((item) => item.subject === selectedSubject);
-  }, [selectedSubject, subjectBreakdown]);
-
-  if (!ready) {
-    return null;
+  if (maintenance?.enabled && session?.role !== "ADMIN") {
+    return <MaintenanceScreen message={maintenance.message} />;
   }
+
+  const studentName = data?.student?.name ?? "your child";
+  const progress = data?.progress;
 
   return (
     <DashboardShell
       role="guardian"
-      title="Guardian Intelligence Portal"
-      subtitle="Track your child's live study dashboard, learning fingerprint anomalies, and concept weaknesses."
+      title="Guardian Portal"
+      subtitle={`Live progress, lecture recommendations, quiz attempts and subject details for ${studentName}.`}
       activeTab={activeTab}
       onTabChange={setActiveTab}
+      session={
+        session
+          ? { name: session.name, email: session.email }
+          : undefined
+      }
     >
-      {status ? (
-        <Alert variant="error" className="mb-6">
-          {status}
-        </Alert>
-      ) : null}
+      <div className="flex flex-col gap-6">
+        {status ? (
+          <Alert variant={data?.student ? "neutral" : "error"}>{status}</Alert>
+        ) : null}
 
-      <PendingApprovalBanner roleLabel="guardian" isApproved={isApproved} />
+        <PendingApprovalBanner roleLabel="guardian" isApproved={isApproved} />
 
-      {/* Child Search Section */}
-      <section className="mb-6">
-        <form onSubmit={handleSearch} className="flex gap-3 max-w-md">
-          <Input
-            className="flex-1"
-            placeholder="Enter Student ID (e.g. student-1)"
-            value={searchId}
-            onChange={(e) => setSearchId(e.target.value)}
-          />
-          <Button type="submit" disabled={loading}>
-            {loading ? "Searching..." : "Track Child"}
-          </Button>
-        </form>
-      </section>
+        {loading && !data ? (
+          <div className="flex h-60 items-center justify-center rounded-2xl border-2 border-dashed border-accent-purple/10 text-slate-500">
+            Loading guardian dashboard...
+          </div>
+        ) : null}
 
-      {studentProgress && activeTab === "overview" && (
-        <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          {/* Main child statistics dashboard */}
-          <div className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <PremiumCard
-                eyebrow="Student ID"
-                title={studentProgress.studentId}
-                description="Currently Enrolled Portal Student"
-                accent="from-accent-purple/20 to-transparent"
-              >
-                <div className="mt-3 text-sm text-slate-300">
-                  <p>
-                    Last active:{" "}
-                    {studentProgress.lastActivityAt
-                      ? formatDateTime(studentProgress.lastActivityAt)
-                      : "Unknown"}
-                  </p>
-                  <p className="mt-1">
-                    Active Streak:{" "}
-                    <span className="font-semibold text-cyan-200">
-                      {studentProgress.streakDays} days
-                    </span>
-                  </p>
-                </div>
-              </PremiumCard>
-
-              <PremiumCard
-                eyebrow="Academics"
-                title={`${studentProgress.avgScore.toFixed(1)}%`}
-                description="Average Quiz Accuracy"
-                accent="from-cyan-500/20 to-transparent"
-              >
-                <div className="mt-3 w-full bg-white/5 rounded-full h-2">
-                  <div
-                    className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
-                    style={{
-                      width: `${Math.min(100, studentProgress.avgScore)}%`,
-                    }}
-                  ></div>
-                </div>
-                <div className="mt-2 flex justify-between text-xs text-slate-400">
-                  <span>
-                    Completed: {studentProgress.completedCheckpoints} gates
-                  </span>
-                  <span>Locked: {studentProgress.lockedCheckpoints} gates</span>
-                </div>
-              </PremiumCard>
-            </div>
-
-            {/* Engagement metrics & anomaly alerts */}
-            <PremiumCard
-              eyebrow="Engagement Monitoring"
-              title="Student Engagement Fingerprint"
-              description="Analyzes attention levels, video watch behaviors, and completion consistency."
-            >
-              <div className="mt-4 p-4 rounded-3xl border border-white/5 bg-white/5">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="text-xs uppercase tracking-wider text-slate-400">
-                      Behavioral Score
-                    </p>
-                    <p
-                      className={`text-2xl font-bold mt-1 ${engagementMetrics.color}`}
-                    >
-                      {engagementMetrics.score} / 100
-                    </p>
-                  </div>
-                  <span
-                    className={`text-sm font-semibold rounded-full px-3 py-1 bg-white/5 ${engagementMetrics.color}`}
+        {data?.student ? (
+          <>
+            {activeTab === "overview" ? (
+              <div className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <PremiumCard
+                    eyebrow="Student"
+                    title={data.student.name}
+                    description={`${data.student.email} · ${
+                      progress?.guardianName || "Guardian-linked"
+                    }`}
+                    accent="from-accent-purple/20 to-transparent"
                   >
-                    {engagementMetrics.status}
-                  </span>
+                    <p className="mt-3 text-xs text-slate-400">
+                      Last active:{" "}
+                      {progress?.lastActivityAt
+                        ? formatDateTime(progress.lastActivityAt)
+                        : "Unknown"}
+                    </p>
+                  </PremiumCard>
+                  <PremiumCard
+                    eyebrow="Academics"
+                    title={`${progress?.avgScore ?? 0}%`}
+                    description="Average Quiz Accuracy"
+                    accent="from-cyan-500/20 to-transparent"
+                  >
+                    <div className="mt-3 h-2 w-full rounded-full bg-accent-purple/[0.06]">
+                      <div
+                        className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
+                        style={{
+                          width: `${Math.min(100, progress?.avgScore ?? 0)}%`,
+                        }}
+                      />
+                    </div>
+                  </PremiumCard>
+                  <PremiumCard
+                    eyebrow="Consistency"
+                    title={`${progress?.progressPercentage ?? 0}%`}
+                    description="Course Progress"
+                    accent="from-emerald-500/20 to-transparent"
+                  >
+                    <p className="mt-3 text-xs text-slate-400">
+                      {progress?.completedLectures ?? 0} lectures completed ·{" "}
+                      {progress?.streakDays ?? 0}-day streak
+                    </p>
+                  </PremiumCard>
+                  <PremiumCard
+                    eyebrow="Checkpoints"
+                    title={`${progress?.completedCheckpoints ?? 0} / ${
+                      (progress?.completedCheckpoints ?? 0) +
+                      (progress?.lockedCheckpoints ?? 0)
+                    }`}
+                    description="Gates Completed"
+                    accent="from-rose-500/20 to-transparent"
+                  >
+                    <p className="mt-3 text-xs text-slate-400">
+                      {progress?.lockedCheckpoints ?? 0} locked ·{" "}
+                      {progress?.failedQuizzes ?? 0} failed quizzes
+                    </p>
+                  </PremiumCard>
                 </div>
-              </div>
 
-              {/* Anomaly Warn Alert board */}
-              <div className="mt-4 space-y-3">
-                <h4 className="text-sm font-semibold text-white">
-                  Security & Anomaly Warnings
-                </h4>
-                {attempts.some((att) => att.responseTime < 3) ? (
-                  <div className="rounded-2xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-300 space-y-1">
-                    <p className="font-semibold">
-                      ⚠️ Attention: Rapid Answering Pattern Detected
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <PremiumCard
+                    eyebrow="Concept Mapping"
+                    title="Weak Concepts Detected"
+                    description="Topics flagged from recent checkpoint quiz failures."
+                  >
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {data.weakTopics.length > 0 ? (
+                        data.weakTopics.map((topic) => (
+                          <span
+                            key={topic}
+                            className="rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200"
+                          >
+                            {topic}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">
+                          No weak topics flagged
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-4 text-sm text-slate-400">
+                      {progress?.currentCourseId
+                        ? "Recommended actions appear under Lecture Recommendations for each lecture."
+                        : "Complete checkpoint quizzes to unlock detailed recommendations."}
                     </p>
-                    <p>
-                      Your child submitted checkpoint responses in less than 3
-                      seconds. This indicates potential random guessing or
-                      lecture skipping behavior.
-                    </p>
-                  </div>
+                  </PremiumCard>
+
+                  <PremiumCard
+                    eyebrow="Recommendations"
+                    title="Top Recommendations"
+                    description="Immediate next steps based on recent performance."
+                  >
+                    <div className="space-y-3">
+                      {atRiskLectures.slice(0, 3).map((lecture) => (
+                        <div
+                          key={lecture.id}
+                          className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4"
+                        >
+                          <p className="text-sm font-semibold text-white">
+                            Revisit: {lecture.title}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-400">
+                            {lecture.recommendation}
+                          </p>
+                        </div>
+                      ))}
+                      {atRiskLectures.length === 0 &&
+                        data.courses
+                          .filter((course) => course.avgScore > 0)
+                          .sort((a, b) => a.avgScore - b.avgScore)
+                          .slice(0, 3)
+                          .map((course) => (
+                            <div
+                              key={course.id}
+                              className="rounded-2xl border border-accent-purple/15 bg-ink-900 p-4"
+                            >
+                              <p className="text-sm font-semibold text-white">
+                                {course.title}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {course.recommendation}
+                              </p>
+                            </div>
+                          ))}
+                      {atRiskLectures.length === 0 &&
+                      data.courses.every((course) => course.avgScore === 0) ? (
+                        <div className="rounded-2xl border border-dashed border-accent-purple/15 p-4 text-sm text-slate-500">
+                          No recommendations yet — your child hasn't completed a
+                          checkpoint quiz.
+                        </div>
+                      ) : null}
+                    </div>
+                  </PremiumCard>
+                </div>
+
+                {data.attempts.length > 0 ? (
+                  <PremiumCard
+                    eyebrow="Recent Activity"
+                    title="Latest Quiz Attempts"
+                    description="Most recent checkpoint results."
+                  >
+                    <div className="space-y-3">
+                      {data.attempts.slice(0, 5).map((attempt) => (
+                        <div
+                          key={attempt.id}
+                          className="flex items-center justify-between gap-4 rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4"
+                        >
+                          <div className="flex items-center gap-3">
+                            {attempt.passed ? (
+                              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+                            ) : (
+                              <XCircle className="h-5 w-5 shrink-0 text-rose-600" />
+                            )}
+                            <div>
+                              <p className="text-sm font-semibold text-white">
+                                {attempt.question}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {attempt.topic || "Checkpoint quiz"} ·{" "}
+                                {formatDateTime(attempt.submittedAt)}
+                              </p>
+                            </div>
+                          </div>
+                          <span
+                            className={cn(
+                              "text-lg font-bold",
+                              attempt.passed
+                                ? "text-emerald-600"
+                                : "text-rose-600",
+                            )}
+                          >
+                            {attempt.score}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </PremiumCard>
                 ) : null}
-                {studentProgress.failedQuizzes > 0 ? (
-                  <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-300 space-y-1">
-                    <p className="font-semibold">
-                      ⚠️ Attention: Concept Retention Alert
-                    </p>
-                    <p>
-                      Failed {studentProgress.failedQuizzes} quizzes this week.
-                      Recommended revision sessions are active below.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-3 text-xs text-emerald-300">
-                    <p className="font-semibold">✓ Normal Learning Rhythm</p>
-                    <p>
-                      No suspicious attempts or critical failed topics detected
-                      in recent learning streams.
-                    </p>
-                  </div>
-                )}
               </div>
-            </PremiumCard>
-          </div>
+            ) : null}
 
-          {/* Weak Topics and Smart Recommendations */}
-          <div className="space-y-6">
-            <PremiumCard
-              eyebrow="Concept Mapping"
-              title="Weak Concepts Detected"
-              description="Topics requiring review based on recent checkpoint quiz failures."
-            >
-              <div className="mt-3 flex flex-wrap gap-2">
-                {weakTopics.length > 0 ? (
-                  weakTopics.map((topic) => (
-                    <span
-                      key={topic}
-                      className="rounded-full bg-rose-500/10 border border-rose-500/30 px-3 py-1 text-xs text-rose-200"
-                    >
-                      {topic}
-                    </span>
-                  ))
-                ) : (
-                  <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 text-xs text-emerald-200">
-                    No Weak Topics Found
-                  </span>
-                )}
-              </div>
-
-              <div className="mt-6 space-y-3">
-                <h4 className="text-sm font-semibold text-white">
-                  Recommended Study Roadmap
-                </h4>
-                <div className="space-y-3">
-                  {recommendations.map((rec, i) => (
-                    <div
-                      key={i}
-                      className="rounded-2xl border border-white/10 bg-ink-900 p-3 text-xs"
-                    >
-                      <div className="flex justify-between items-start">
-                        <span className="font-semibold text-white">
-                          {rec.title}
-                        </span>
-                        <span className="text-[9px] uppercase tracking-wider text-cyan-200 bg-cyan-400/15 px-2 py-0.5 rounded-full">
-                          {rec.type}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-slate-400">{rec.desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </PremiumCard>
-          </div>
-        </div>
-      )}
-
-      {studentProgress && activeTab === "progress" && (
-        <div className="space-y-6">
-          <PremiumCard
-            eyebrow="Detailed Progress"
-            title="Subject Performance Report"
-            description="Inspect subject-by-subject progress and targeted improvement actions."
-          >
-            <div className="grid gap-6 lg:grid-cols-[0.7fr_1.3fr]">
-              <div className="space-y-4">
-                <Select
-                  value={selectedSubject}
-                  onChange={(e) => setSelectedSubject(e.target.value)}
+            {activeTab === "progress" ? (
+              <div className="space-y-6">
+                <PremiumCard
+                  eyebrow="Detailed Progress"
+                  title="Subject Performance Report"
+                  description="Subject-by-subject scores, quiz counts and improvement actions."
                 >
-                  <option value="all">All Subjects</option>
-                  {subjectBreakdown.map((item) => (
-                    <option key={item.subject} value={item.subject}>
-                      {item.subject}
-                    </option>
-                  ))}
-                </Select>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        Overall Progress
+                      </p>
+                      <p className="mt-2 text-3xl font-bold text-white">
+                        {progress?.progressPercentage ?? 0}%
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        Average Score
+                      </p>
+                      <p className="mt-2 text-3xl font-bold text-cyan-600">
+                        {progress?.avgScore ?? 0}%
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                      Overall Progress
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-white">
-                      {studentProgress.progressPercentage}%
-                    </p>
+                  <div className="mt-6 space-y-4">
+                    {data.courses.map((course) => (
+                      <div
+                        key={course.id}
+                        className="rounded-2xl border border-accent-purple/15 bg-ink-900 p-4"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <h4 className="text-sm font-bold text-white">
+                              {course.title}
+                            </h4>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {course.code || "No code"} · {course.quizCount}{" "}
+                              checkpoint quiz
+                              {course.quizCount === 1 ? "" : "zes"}
+                            </p>
+                            <p className="mt-2 text-xs text-slate-400">
+                              {course.recommendation}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs uppercase tracking-widest text-slate-500">
+                              Score
+                            </p>
+                            <p
+                              className={cn(
+                                "text-2xl font-bold",
+                                course.avgScore < 50
+                                  ? "text-rose-600"
+                                  : course.avgScore < 80
+                                    ? "text-amber-600"
+                                    : "text-emerald-600",
+                              )}
+                            >
+                              {course.avgScore}%
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 h-2 rounded-full bg-accent-purple/[0.06]">
+                          <div
+                            className={cn(
+                              "h-2 rounded-full",
+                              course.avgScore < 50
+                                ? "bg-rose-500"
+                                : course.avgScore < 80
+                                  ? "bg-amber-400"
+                                  : "bg-gradient-to-r from-emerald-400 to-cyan-400",
+                            )}
+                            style={{
+                              width: `${Math.min(100, course.avgScore)}%`,
+                            }}
+                          />
+                        </div>
+                        <div className="mt-3 flex gap-3 text-xs text-slate-400">
+                          <span>
+                            {course.attemptCount} attempt
+                            {course.attemptCount === 1 ? "" : "s"}
+                          </span>
+                          <span className="text-emerald-600">
+                            {course.passed} passed
+                          </span>
+                          <span className="text-rose-600">
+                            {course.failed} failed
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {data.courses.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-sm text-slate-500">
+                        No subjects are assigned to this student yet.
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                      Average Score
-                    </p>
-                    <p className="mt-2 text-3xl font-bold text-cyan-300">
-                      {studentProgress.avgScore.toFixed(1)}%
-                    </p>
-                  </div>
-                </div>
+                </PremiumCard>
               </div>
+            ) : null}
 
-              <div className="space-y-4">
-                {filteredSubjects.map((item) => (
-                  <div
-                    key={item.subject}
-                    className="rounded-2xl border border-white/10 bg-ink-900 p-4"
+            {activeTab === "lectures" ? (
+              <div className="space-y-6">
+                <PremiumCard
+                  eyebrow="Recommendations"
+                  title="Lecture Recommendations"
+                  description="Every lecture in the enrolled courses with a tailored recommendation based on your child's results."
+                >
+                  <div className="space-y-3">
+                    {data.lectures.map((lecture) => {
+                      const course = data.courses.find(
+                        (item) => item.id === lecture.courseId,
+                      );
+                      return (
+                        <div
+                          key={lecture.id}
+                          className={cn(
+                            "rounded-2xl border p-4",
+                            lecture.attempted && lecture.avgScore < 50
+                              ? "border-rose-500/20 bg-rose-500/5"
+                              : lecture.attempted && lecture.failed > 0
+                                ? "border-amber-500/20 bg-amber-500/5"
+                                : "border-accent-purple/10 bg-accent-purple/[0.06]",
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex items-start gap-3">
+                              <PlayCircle
+                                className={cn(
+                                  "mt-0.5 h-5 w-5 shrink-0",
+                                  lecture.attempted && lecture.avgScore < 50
+                                    ? "text-rose-600"
+                                    : "text-accent-cyan",
+                                )}
+                              />
+                              <div>
+                                <h4 className="text-sm font-bold text-white">
+                                  {lecture.lectureOrder}. {lecture.title}
+                                </h4>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {course?.title || "Unknown course"} ·{" "}
+                                  {lecture.durationMinutes ?? "—"} min
+                                  {lecture.attempted
+                                    ? ` · ${lecture.attemptCount} attempt${lecture.attemptCount === 1 ? "" : "s"} · avg ${lecture.avgScore}%`
+                                    : " · not attempted yet"}
+                                </p>
+                              </div>
+                            </div>
+                            {lecture.attempted ? (
+                              <span
+                                className={cn(
+                                  "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
+                                  lecture.avgScore < 50
+                                    ? "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm"
+                                    : lecture.avgScore < 80
+                                      ? "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm"
+                                      : "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm",
+                                )}
+                              >
+                                {lecture.avgScore}%
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-3 text-xs leading-relaxed text-slate-600">
+                            {lecture.recommendation}
+                          </p>
+                          {lecture.transcript ? (
+                            <p className="mt-2 line-clamp-2 text-xs text-slate-500">
+                              {lecture.transcript}
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    {data.lectures.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-sm text-slate-500">
+                        No lectures have been published yet.
+                      </div>
+                    ) : null}
+                  </div>
+                </PremiumCard>
+              </div>
+            ) : null}
+
+            {activeTab === "quizzes" ? (
+              <div className="space-y-6">
+                <PremiumCard
+                  eyebrow="Attempt Log"
+                  title="Every Attempted Quiz"
+                  description="Complete history of checkpoint quiz attempts with results."
+                >
+                  <div className="space-y-3">
+                    {data.attempts.map((attempt) => {
+                      const course = data.courses.find(
+                        (item) => item.id === attempt.courseId,
+                      );
+                      return (
+                        <div
+                          key={attempt.id}
+                          className={cn(
+                            "rounded-2xl border p-4",
+                            attempt.passed
+                              ? "border-accent-purple/10 bg-accent-purple/[0.06]"
+                              : "border-rose-500/20 bg-rose-500/5",
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <h4 className="text-sm font-semibold text-white">
+                                {attempt.question}
+                              </h4>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <span
+                                  className={cn(
+                                    "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
+                                    difficultyBadge[attempt.difficulty] ??
+                                      "bg-accent-purple/[0.06] text-slate-600",
+                                  )}
+                                >
+                                  {attempt.difficulty}
+                                </span>
+                                <span className="rounded-full bg-accent-purple/[0.06] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-600">
+                                  {attempt.topic || "Checkpoint quiz"}
+                                </span>
+                                {course ? (
+                                  <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-cyan-600">
+                                    {course.title}
+                                  </span>
+                                ) : null}
+                                <span className="rounded-full bg-accent-purple/[0.06] px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                  Attempt #{attempt.attemptNumber}
+                                </span>
+                              </div>
+                              <p className="mt-2 text-xs text-slate-500">
+                                {formatDateTime(attempt.submittedAt)}
+                                {attempt.responseTime < 3
+                                  ? " · answered in under 3 seconds"
+                                  : ""}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p
+                                className={cn(
+                                  "text-2xl font-bold",
+                                  attempt.passed
+                                    ? "text-emerald-600"
+                                    : "text-rose-600",
+                                )}
+                              >
+                                {attempt.score}%
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {attempt.passed ? "Passed" : "Failed"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {data.attempts.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-sm text-slate-500">
+                        No quiz attempts recorded yet.
+                      </div>
+                    ) : null}
+                  </div>
+                </PremiumCard>
+              </div>
+            ) : null}
+
+            {activeTab === "alerts" ? (
+              <div className="space-y-6">
+                {atRiskLectures.length === 0 &&
+                failedAttempts.length === 0 &&
+                rapidAttempts.length === 0 ? (
+                  <Alert variant="success" className="flex items-center gap-2">
+                    <CheckCircle2 size={18} />
+                    No attention or consistency alerts — your child is on a
+                    healthy learning rhythm.
+                  </Alert>
+                ) : null}
+
+                {atRiskLectures.length > 0 ? (
+                  <PremiumCard
+                    eyebrow="Risk Alert"
+                    title="Lectures Below 50%"
+                    description="Lectures where the average checkpoint score is under 50%."
+                    accent="from-rose-500/20 to-transparent"
                   >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h4 className="text-sm font-semibold text-white">
-                          {item.subject}
-                        </h4>
-                        <p className="mt-1 text-xs text-slate-400">
-                          {item.recommendation}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs uppercase tracking-widest text-slate-500">
-                          Score
-                        </p>
-                        <p className="text-2xl font-bold text-cyan-200">
-                          {item.score}%
-                        </p>
-                      </div>
+                    <div className="space-y-3">
+                      {atRiskLectures.map((lecture) => (
+                        <div
+                          key={lecture.id}
+                          className="flex items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4"
+                        >
+                          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
+                          <div>
+                            <p className="text-sm font-semibold text-white">
+                              {lecture.title} — {lecture.avgScore}%
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {lecture.recommendation}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
+                  </PremiumCard>
+                ) : null}
 
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="mb-1 flex justify-between text-xs text-slate-400">
-                          <span>Mastery</span>
-                          <span>{item.score}%</span>
+                {failedAttempts.length > 0 ? (
+                  <PremiumCard
+                    eyebrow="Concept Retention"
+                    title="Failed Quiz Attempts"
+                    description="Checkpoint quizzes that were not passed."
+                    accent="from-amber-500/20 to-transparent"
+                  >
+                    <div className="space-y-3">
+                      {failedAttempts.map((attempt) => (
+                        <div
+                          key={attempt.id}
+                          className="flex items-start justify-between gap-4 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4"
+                        >
+                          <div>
+                            <p className="text-sm font-semibold text-white">
+                              {attempt.question}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {attempt.topic || "Checkpoint quiz"} ·{" "}
+                              {formatDate(attempt.submittedAt)}
+                            </p>
+                          </div>
+                          <span className="font-bold text-amber-600">
+                            {attempt.score}%
+                          </span>
                         </div>
-                        <div className="h-2 rounded-full bg-white/5">
-                          <div
-                            className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
-                            style={{ width: `${item.score}%` }}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <div className="mb-1 flex justify-between text-xs text-slate-400">
-                          <span>Completion</span>
-                          <span>{item.progress}%</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-white/5">
-                          <div
-                            className="h-2 rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400"
-                            style={{ width: `${item.progress}%` }}
-                          />
-                        </div>
-                      </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </PremiumCard>
-        </div>
-      )}
+                  </PremiumCard>
+                ) : null}
 
-      {studentProgress && activeTab === "alerts" && (
-        <div className="space-y-6">
-          <PremiumCard
-            eyebrow="Alerts"
-            title="Attention & Consistency Alerts"
-            description="Guardian-focused warnings, recommendations, and follow-up actions."
-          >
-            <div className="space-y-4">
-              {attempts.some((att) => att.responseTime < 3) ? (
-                <div className="rounded-2xl border border-rose-400/20 bg-rose-400/5 p-4 text-sm text-rose-200">
-                  Rapid answering was detected in recent quiz attempts. Consider supervising the next study session.
-                </div>
-              ) : null}
-              <div className="rounded-2xl border border-white/10 bg-ink-900 p-4">
-                <h4 className="text-sm font-semibold text-white">
-                  Recommended Parent Actions
-                </h4>
-                <div className="mt-3 space-y-3">
-                  {recommendations.map((rec) => (
-                    <div
-                      key={rec.title}
-                      className="rounded-2xl bg-white/5 p-3 text-sm text-slate-300"
-                    >
-                      <p className="font-semibold text-white">{rec.title}</p>
-                      <p className="mt-1">{rec.desc}</p>
+                {rapidAttempts.length > 0 ? (
+                  <PremiumCard
+                    eyebrow="Security & Anomaly"
+                    title="Rapid Answering Detected"
+                    description="Attempts submitted in under 3 seconds may indicate guessing or lecture skipping."
+                    accent="from-rose-500/20 to-transparent"
+                  >
+                    <div className="space-y-3">
+                      {rapidAttempts.map((attempt) => (
+                        <div
+                          key={attempt.id}
+                          className="flex items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4"
+                        >
+                          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
+                          <div>
+                            <p className="text-sm font-semibold text-white">
+                              {attempt.question}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              Answered in {attempt.responseTime} seconds ·{" "}
+                              {formatDateTime(attempt.submittedAt)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </PremiumCard>
+                ) : null}
+
+                {atRiskLectures.length === 0 &&
+                failedAttempts.length === 0 &&
+                rapidAttempts.length === 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setActiveTab("progress")}
+                  >
+                    View Subject Progress
+                  </Button>
+                ) : null}
               </div>
-            </div>
-          </PremiumCard>
-        </div>
-      )}
+            ) : null}
+          </>
+        ) : null}
+      </div>
     </DashboardShell>
   );
 }

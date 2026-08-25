@@ -6,15 +6,18 @@ export type ButtonSize = "sm" | "md" | "lg" | "pill";
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-gradient-to-r from-accent-purple to-accent-cyan text-white shadow-glow hover:opacity-90",
-  solid: "bg-accent-purple text-white hover:bg-accent-purple/90",
-  secondary: "border border-white/10 bg-ink-800 text-white hover:bg-white/10",
-  ghost: "border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 hover:text-white",
+    "bg-brand-gradient text-[#fff] font-bold shadow-glow hover:shadow-soft hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200",
+  solid:
+    "glass-chip text-white font-bold hover:bg-accent-purple/[0.14] hover:border-accent-purple/25",
+  secondary:
+    "glass-chip text-white hover:bg-accent-purple/[0.14] hover:border-accent-purple/25",
+  ghost:
+    "border-transparent bg-transparent text-slate-600 hover:bg-accent-purple/[0.08] hover:text-accent-purple",
   outline:
-    "border border-white/10 bg-transparent text-white hover:border-accent-purple/40 hover:bg-white/5",
+    "border border-accent-purple/25 bg-transparent text-slate-800 hover:border-accent-purple/50 hover:bg-accent-purple/[0.05]",
   success:
-    "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
-  danger: "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20",
+    "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100",
+  danger: "bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100",
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
@@ -37,7 +40,7 @@ export function buttonVariants({
   className,
 }: ButtonVariantProps & { className?: string } = {}) {
   return cn(
-    "inline-flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-purple/50 disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex select-none items-center justify-center gap-2 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-purple/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 active:scale-[0.98]",
     variantStyles[variant],
     sizeStyles[size],
     fullWidth && "w-full",

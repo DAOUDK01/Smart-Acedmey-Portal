@@ -6,7 +6,7 @@ import { CreateQuizQuestionDto, UpdateQuizQuestionDto, CreateQuizAttemptDto } fr
 import { QuizStatus } from "@prisma/client";
 import { serializeQuiz, serializeQuizzes } from "./quiz.serializer";
 import { generateFallbackQuiz, generateFallbackQuizFromSegments } from "./quiz.fallback";
-import { isConfiguredApiKey, resolveOllamaUrl } from "./quiz.provider";
+import { isConfiguredApiKey, resolveOllamaUrl, resolveQuizAiApiKey, resolveQuizAiBaseUrl, resolveQuizAiModel, resolveQuizAiProvider } from "./quiz.provider";
 import {
   LectureSegmentInput,
   splitTranscriptIntoSegments,
@@ -24,6 +24,14 @@ export class QuizService {
   async listQuizQuestionsByStatus(status: QuizStatus) {
     const quizzes = await this.prisma.quizQuestion.findMany({
       where: { status },
+      orderBy: { createdAt: "desc" },
+    });
+    return serializeQuizzes(quizzes);
+  }
+
+  async listApprovedMockExams() {
+    const quizzes = await this.prisma.quizQuestion.findMany({
+      where: { status: QuizStatus.APPROVED, lectureId: null },
       orderBy: { createdAt: "desc" },
     });
     return serializeQuizzes(quizzes);
@@ -81,6 +89,72 @@ export class QuizService {
     }
   }
 
+  private async requestAiQuiz(
+    topic: string,
+    transcript: string | undefined,
+    segments: LectureSegmentInput[],
+    questionCount: number,
+  ) {
+    const apiKey = resolveQuizAiApiKey();
+    const baseUrl = resolveQuizAiBaseUrl();
+    const model = resolveQuizAiModel();
+    if (!apiKey || !baseUrl || !model) {
+      return null;
+    }
+
+    const segmentText =
+      segments.length > 0
+        ? segments
+            .map(
+              (segment) =>
+                `[${segment.label} at ${segment.timestamp}s] ${segment.text}`,
+            )
+            .join("\n\n")
+        : transcript;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const response = await fetch(baseUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          temperature: 0.4,
+          messages: [
+            { role: "system", content: AI_QUIZ_PROMPT },
+            {
+              role: "user",
+              content: `Lecture topic: ${topic}\n\nLecture transcript:\n${segmentText || topic}\n\nGenerate ${Math.max(1, Math.min(questionCount, 12))} quiz questions covering the content above.`,
+            },
+          ],
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`AI quiz request failed with status ${response.status}`);
+      }
+
+      const raw = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = raw.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error("AI quiz response missing content");
+      }
+
+      return JSON.parse(content);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private normalizeQuizPayload(
     quizData: any,
     topic: string,
@@ -102,6 +176,7 @@ export class QuizService {
     topic: string,
     transcript: string | undefined,
     questionCount: number,
+    segments: LectureSegmentInput[],
   ) {
     const prompt = topic || transcript || "Generate a quiz";
 
@@ -113,6 +188,22 @@ export class QuizService {
         }
       } catch (error) {
         console.warn("Remote quiz provider failed, trying fallback chain.", error);
+      }
+    }
+
+    if (resolveQuizAiProvider() !== null) {
+      try {
+        const aiQuiz = await this.requestAiQuiz(
+          topic,
+          transcript,
+          segments,
+          questionCount,
+        );
+        if (aiQuiz?.questions?.length) {
+          return this.normalizeQuizPayload(aiQuiz, topic, transcript, questionCount);
+        }
+      } catch (error) {
+        console.warn("AI quiz generation failed, trying fallback chain.", error);
       }
     }
 
@@ -133,13 +224,19 @@ export class QuizService {
     questions: any[],
     segments: LectureSegmentInput[],
   ) {
-    return questions.map((question, index) => {
-      const segment = segments[index] ?? segments[segments.length - 1];
+    const byDifficulty: Record<string, LectureSegmentInput | undefined> = {
+      easy: segments[0],
+      medium: segments[Math.min(1, segments.length - 1)],
+      hard: segments[segments.length - 1],
+    };
+    const lastSegment = segments[segments.length - 1];
+    return questions.map((question) => {
+      const segment = byDifficulty[question.difficulty] ?? lastSegment;
       return {
         ...question,
         timestamp: question.timestamp ?? segment?.timestamp,
         segment: question.segment ?? segment?.label,
-        difficulty: segment?.difficulty ?? question.difficulty,
+        difficulty: question.difficulty ?? segment?.difficulty,
         topic: question.topic ?? (segment ? `${segment.label}|${segment.text.slice(0, 80)}` : undefined),
       };
     });
@@ -164,18 +261,63 @@ export class QuizService {
             Math.max(1, Math.min(questionCount, 8)),
           );
 
-    let quizData = generateFallbackQuizFromSegments(topicName, resolvedSegments);
+    let quizData = generateFallbackQuizFromSegments(
+      topicName,
+      resolvedSegments,
+      questionCount,
+    );
 
-    if (isConfiguredApiKey(process.env.QUIZ_API_KEY) || resolveOllamaUrl()) {
+    if (isConfiguredApiKey(process.env.QUIZ_API_KEY) || resolveQuizAiProvider() !== null || resolveOllamaUrl()) {
       const aiData = await this.resolveQuizData(
         topicName,
         transcript,
-        resolvedSegments.length,
+        questionCount,
+        resolvedSegments,
       );
       if (aiData?.questions?.length) {
+        const difficultyOrder: Record<string, number> = {
+          easy: 0,
+          medium: 1,
+          hard: 2,
+        };
+        const balanced = [...aiData.questions];
+        const counts: Record<string, number> = { easy: 0, medium: 0, hard: 0 };
+        for (const q of balanced) {
+          const level =
+            q.difficulty === "easy" || q.difficulty === "hard"
+              ? q.difficulty
+              : "medium";
+          counts[level]++;
+          q.difficulty = level;
+        }
+        const target = Math.round(balanced.length / 3);
+        const deficit = ["easy", "medium", "hard"].filter(
+          (level) => counts[level] < target,
+        );
+        for (const level of deficit) {
+          for (let i = counts[level]; i < target; i++) {
+            const surplusLevel = ["easy", "medium", "hard"].find(
+              (candidate) => counts[candidate] > target,
+            );
+            if (!surplusLevel) break;
+            const question = balanced.find(
+              (q) =>
+                q.difficulty === surplusLevel && counts[level] < target,
+            );
+            if (!question) break;
+            question.difficulty = level;
+            counts[level]++;
+            counts[surplusLevel]--;
+          }
+        }
+        const ordered = [...balanced].sort(
+          (a, b) =>
+            (difficultyOrder[a.difficulty ?? ""] ?? 1) -
+            (difficultyOrder[b.difficulty ?? ""] ?? 1),
+        );
         quizData = {
           ...aiData,
-          questions: this.attachSegmentMetadata(aiData.questions, resolvedSegments),
+          questions: this.attachSegmentMetadata(ordered, resolvedSegments),
         };
       }
     }
@@ -248,21 +390,23 @@ export class QuizService {
   }
 
   async createQuizQuestion(body: CreateQuizQuestionDto) {
-    const question = await this.prisma.quizQuestion.create({ data: body as any });
+    const normalized = normalizeQuizStatus(body);
+    const question = await this.prisma.quizQuestion.create({ data: normalized as any });
     return serializeQuiz(question);
   }
 
   async updateQuizQuestion(id: string, body: UpdateQuizQuestionDto) {
+    const normalized = normalizeQuizStatus(body);
     const question = await this.prisma.quizQuestion.update({
       where: { id },
       data: {
-        ...body,
+        ...normalized,
         reviewedAt:
-          body.status === QuizStatus.APPROVED ||
-          body.status === QuizStatus.REJECTED
+          normalized.status === QuizStatus.APPROVED ||
+          normalized.status === QuizStatus.REJECTED
             ? new Date()
             : undefined,
-        publishedAt: body.status === QuizStatus.APPROVED ? new Date() : undefined,
+        publishedAt: normalized.status === QuizStatus.APPROVED ? new Date() : undefined,
       },
     });
     return serializeQuiz(question);
@@ -310,7 +454,64 @@ export class QuizService {
     return serializeQuiz(quiz);
   }
 
-  createQuizAttempt(body: CreateQuizAttemptDto) {
-    return this.prisma.quizAttempt.create({ data: body as any });
+  async createQuizAttempt(body: CreateQuizAttemptDto) {
+    const attempt = await this.prisma.quizAttempt.create({ data: body as any });
+
+    const [attempts, approvedCount] = await Promise.all([
+      this.prisma.quizAttempt.findMany({
+        where: { studentId: body.studentId },
+        select: { quizId: true, score: true, passed: true },
+      }),
+      this.prisma.quizQuestion.count({ where: { status: QuizStatus.APPROVED } }),
+    ]);
+
+    const avgScore = Math.round(
+      attempts.reduce((sum, item) => sum + item.score, 0) /
+        Math.max(attempts.length, 1),
+    );
+    const failedQuizzes = attempts.filter((item) => !item.passed).length;
+    const attemptedQuizzes = new Set(
+      attempts.map((item) => item.quizId),
+    ).size;
+    const quizProgress =
+      approvedCount > 0
+        ? Math.round((attemptedQuizzes / approvedCount) * 100)
+        : 0;
+
+    const existing = await this.prisma.studentProgress.findUnique({
+      where: { studentId: body.studentId },
+    });
+
+    const payload = {
+      avgScore,
+      failedQuizzes,
+      lastActivityAt: new Date(),
+      progressPercentage: Math.max(
+        existing?.progressPercentage ?? 0,
+        quizProgress,
+      ),
+    };
+
+    if (existing) {
+      await this.prisma.studentProgress.update({
+        where: { id: existing.id },
+        data: payload,
+      });
+    } else {
+      await this.prisma.studentProgress.create({
+        data: { studentId: body.studentId, ...payload },
+      });
+    }
+
+    return attempt;
   }
+}
+
+function normalizeQuizStatus<T extends { status?: string | QuizStatus }>(
+  body: T,
+): T {
+  if (typeof body.status !== "string") return body;
+  const upper = body.status.toUpperCase();
+  if (!(upper in QuizStatus)) return body;
+  return { ...body, status: upper as QuizStatus };
 }

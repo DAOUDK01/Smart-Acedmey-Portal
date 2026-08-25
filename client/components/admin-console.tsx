@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { PremiumCard } from "@/components/premium-card";
 import { Alert } from "@/components/ui/alert";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { usePortalLock } from "@/lib/use-portal-lock";
+import { getInitialTab, useTabHistory } from "@/lib/use-tab-history";
+import { useMaintenance } from "@/lib/use-maintenance";
 import { formatDateTime } from "@/lib/portal-data";
 import { 
   BookOpen, 
@@ -131,8 +134,13 @@ function formatDocumentLabel(label: string) {
 }
 
 export function AdminConsole() {
-  const { ready, session } = usePortalLock("/admin");
-  const [activeTab, setActiveTab] = useState("overview");
+  const { ready, session, maintenance } = usePortalLock("/admin");
+  const { enabled: maintenanceEnabled, message: maintenanceMessage, refresh: refreshMaintenance } = useMaintenance();
+  const [messageInput, setMessageInput] = useState("");
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+  const [maintenanceMessageSaved, setMaintenanceMessageSaved] = useState(false);
+  const [activeTab, setActiveTab] = useState(() => getInitialTab("overview"));
+  useTabHistory(activeTab, setActiveTab);
   const [users, setUsers] = useState<User[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
@@ -158,6 +166,28 @@ export function AdminConsole() {
   const showStatus = (msg: string) => {
     setStatus(msg);
     setTimeout(() => setStatus(null), 3000);
+  };
+
+  useEffect(() => {
+    setMessageInput(maintenanceMessage ?? "");
+  }, [maintenanceMessage]);
+
+  const updateMaintenance = async (enabled: boolean, message?: string) => {
+    setMaintenanceSaving(true);
+    try {
+      await apiFetch("/api/system/admin/maintenance", {
+        method: "POST",
+        body: JSON.stringify({ enabled, message }),
+      });
+      await refreshMaintenance();
+      showStatus(enabled ? "Maintenance mode enabled. Only admins can access the platform." : "Maintenance mode disabled.");
+      setMaintenanceMessageSaved(true);
+      setTimeout(() => setMaintenanceMessageSaved(false), 2000);
+    } catch (error) {
+      showStatus(error instanceof Error ? error.message : "Failed to update maintenance settings.");
+    } finally {
+      setMaintenanceSaving(false);
+    }
   };
 
   // New Course Form
@@ -485,6 +515,22 @@ export function AdminConsole() {
       session={session ?? undefined}
     >
       <div className="flex flex-col gap-6">
+        {maintenanceEnabled && (
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <AlertCircle className="h-5 w-5 shrink-0 text-amber-400" />
+            <div className="text-sm text-amber-100">
+              <span className="font-semibold">Maintenance mode is active.</span>{" "}
+              Only admin accounts can access the platform right now.
+            </div>
+            <button
+              onClick={() => setActiveTab("settings")}
+              className="ml-auto shrink-0 text-xs font-semibold text-amber-300 underline"
+            >
+              Go to settings
+            </button>
+          </div>
+        )}
+
         {status && (
           <Alert variant="info">{status}</Alert>
         )}
@@ -539,52 +585,48 @@ export function AdminConsole() {
         {isStaffViewTab && (
           <div className="space-y-6">
             <div className="grid gap-4 md:grid-cols-4">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Active Teachers</p>
                 <p className="mt-2 text-3xl font-bold text-white">{activeStaff.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Invited</p>
                 <p className="mt-2 text-3xl font-bold text-accent-cyan">{pendingStaffInvitations.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Under Review</p>
-                <p className="mt-2 text-3xl font-bold text-amber-300">{submittedStaffInvitations.length}</p>
+                <p className="mt-2 text-3xl font-bold text-amber-600">{submittedStaffInvitations.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Disabled</p>
-                <p className="mt-2 text-3xl font-bold text-rose-300">{inactiveStaff.length}</p>
+                <p className="mt-2 text-3xl font-bold text-rose-600">{inactiveStaff.length}</p>
               </div>
             </div>
 
             <PremiumCard eyebrow="Directory" title="View Staff" description="Active teacher accounts and invitation progress.">
               <div className="mt-5 grid gap-4 lg:grid-cols-2">
                 {activeStaff.map((user) => (
-                  <div key={user.id} className="rounded-2xl border border-white/10 bg-ink-900/70 p-5 transition hover:border-accent-cyan/30">
+                  <div key={user.id} className="rounded-2xl border border-accent-purple/15 bg-ink-900/70 p-5 transition hover:border-accent-cyan/30">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-accent-purple to-accent-cyan p-[1px]">
-                          <div className="flex h-full w-full items-center justify-center rounded-[15px] bg-ink-950 text-sm font-bold text-white">
-                            {user.name.charAt(0)}
-                          </div>
-                        </div>
+                        <Avatar size="lg" title={user.name} />
                         <div>
                           <h3 className="text-sm font-bold text-white">{user.name}</h3>
                           <p className="mt-1 text-xs text-slate-500">{user.email}</p>
                         </div>
                       </div>
-                      <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-300">
+                      <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-600">
                         Active
                       </span>
                     </div>
-                    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-4">
+                    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-accent-purple/15 pt-4">
                       <p className="text-xs text-slate-500">Joined {formatDateTime(user.createdAt)}</p>
                       <div className="flex gap-2">
                         <button onClick={() => viewStaffDetails(user)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
                         <button
                           onClick={() => updateApproval(user.id, false)}
                           disabled={isProcessing}
-                          className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20"
+                          className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-500/20"
                         >
                           <UserX size={14} />
                           Disable
@@ -595,17 +637,17 @@ export function AdminConsole() {
                 ))}
 
                 {staffInvitations.filter((invitation) => invitation.status !== "APPROVED").map((invitation) => (
-                  <div key={invitation.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                  <div key={invitation.id} className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.05] p-5">
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <h3 className="text-sm font-bold text-white">{invitation.name}</h3>
                         <p className="mt-1 text-xs text-slate-500">{invitation.email}</p>
                       </div>
-                      <span className="rounded-full bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-300">
+                      <span className="rounded-full bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-600">
                         {invitation.status.replace(/_/g, " ")}
                       </span>
                     </div>
-                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
+                    <div className="mt-5 flex items-center justify-between gap-3 border-t border-accent-purple/15 pt-4">
                       <div className="flex items-center gap-2 text-xs text-slate-500"><Mail size={14} />Awaiting teacher registration</div>
                       <div className="flex flex-wrap justify-end gap-2">
                         <button onClick={() => setSelectedStaffInvitation(invitation)} className="inline-flex items-center gap-2 rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 px-3 py-2 text-xs font-semibold text-accent-cyan transition hover:bg-accent-cyan/20"><Eye size={14} />View Details</button>
@@ -614,7 +656,7 @@ export function AdminConsole() {
                             type="button"
                             onClick={() => resendStaffInvitation(invitation)}
                             disabled={isProcessing}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-600 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <Mail size={14} />
                             Resend
@@ -625,7 +667,7 @@ export function AdminConsole() {
                             type="button"
                             onClick={() => deletePendingStaffInvitation(invitation)}
                             disabled={isProcessing}
-                            className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <Trash2 size={14} />
                             Delete
@@ -637,7 +679,7 @@ export function AdminConsole() {
                 ))}
 
                 {activeStaff.length === 0 && staffInvitations.length === 0 && (
-                  <div className="col-span-full rounded-2xl border border-dashed border-white/10 p-10 text-center">
+                  <div className="col-span-full rounded-2xl border border-dashed border-accent-purple/15 p-10 text-center">
                     <p className="text-sm font-semibold text-white">No staff records yet.</p>
                     <p className="mt-2 text-sm text-slate-500">Use Add Staff to send your first teacher registration link.</p>
                   </div>
@@ -650,14 +692,14 @@ export function AdminConsole() {
         {isStaffApprovalsTab && (
           <div className="space-y-6">
             <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <div className="flex items-center gap-3">
-                  <Clock className="h-5 w-5 text-amber-300" />
+                  <Clock className="h-5 w-5 text-amber-600" />
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Submitted</p>
                 </div>
                 <p className="mt-3 text-3xl font-bold text-white">{submittedStaffInvitations.length}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <div className="flex items-center gap-3">
                   <RefreshCw className="h-5 w-5 text-accent-cyan" />
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Needs Action</p>
@@ -666,9 +708,9 @@ export function AdminConsole() {
                   {staffInvitations.filter((invitation) => invitation.status === "REVISION_REQUESTED").length}
                 </p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-5">
                 <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Approved</p>
                 </div>
                 <p className="mt-3 text-3xl font-bold text-white">
@@ -680,18 +722,18 @@ export function AdminConsole() {
             <PremiumCard eyebrow="Review Queue" title="Staff Approvals" description="Review submitted profiles, documents, and admin decisions.">
               <div className="mt-5 space-y-4">
                 {staffInvitations.map((invitation) => (
-                  <div key={invitation.id} className="rounded-2xl border border-white/10 bg-ink-900/70 p-5">
+                  <div key={invitation.id} className="rounded-2xl border border-accent-purple/15 bg-ink-900/70 p-5">
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-3">
                           <h3 className="text-base font-bold text-white">{invitation.name}</h3>
                           <span className={cn(
                             "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
-                            invitation.status === "APPROVED" && "bg-emerald-500/10 text-emerald-300",
-                            invitation.status === "SUBMITTED" && "bg-amber-500/10 text-amber-300",
-                            invitation.status === "INVITED" && "bg-accent-cyan/10 text-accent-cyan",
+                            invitation.status === "APPROVED" && "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm",
+                            invitation.status === "SUBMITTED" && "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm",
+                            invitation.status === "INVITED" && "bg-accent-cyan/10 text-accent-cyan ring-1 ring-inset ring-accent-cyan/20 backdrop-blur-sm",
                             invitation.status === "REVISION_REQUESTED" && "bg-purple-500/10 text-purple-300",
-                            invitation.status === "REJECTED" && "bg-rose-500/10 text-rose-300",
+                            invitation.status === "REJECTED" && "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm",
                           )}>
                             {invitation.status.replace(/_/g, " ")}
                           </span>
@@ -714,7 +756,7 @@ export function AdminConsole() {
                       )}
                     </div>
 
-                    <div className="mt-5 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="mt-5 flex flex-col gap-3 rounded-xl border border-accent-purple/15 bg-accent-purple/[0.05] p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="grid gap-3 text-xs text-slate-400 sm:grid-cols-3">
                         <span>{invitation.educationDetails ? "Education submitted" : "Education pending"}</span>
                         <span>{invitation.personalDetails ? "Personal details submitted" : "Personal details pending"}</span>
@@ -734,7 +776,7 @@ export function AdminConsole() {
                 ))}
 
                 {staffInvitations.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center">
+                  <div className="rounded-2xl border border-dashed border-accent-purple/15 p-10 text-center">
                     <p className="text-sm font-semibold text-white">No staff applications yet.</p>
                     <p className="mt-2 text-sm text-slate-500">Submitted teacher registrations will appear here for review.</p>
                   </div>
@@ -808,24 +850,20 @@ export function AdminConsole() {
                 {filteredStudents.map((student) => {
                   const progress = studentProgress.find(p => p.studentId === student.id);
                   return (
-                    <div key={student.id} className="group rounded-3xl border border-white/5 bg-white/5 p-6 transition-all hover:bg-white/10">
+                    <div key={student.id} className="group rounded-3xl border border-accent-purple/10 bg-accent-purple/[0.06] p-6 transition-all hover:bg-accent-purple/[0.12]">
                       <div className="flex items-center gap-4 mb-4">
-                        <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-accent-purple to-accent-cyan p-[1px]">
-                          <div className="h-full w-full rounded-[15px] bg-ink-900 flex items-center justify-center font-bold text-white">
-                            {student.name.charAt(0)}
-                          </div>
-                        </div>
+                        <Avatar size="lg" title={student.name} />
                         <div className="overflow-hidden">
                           <h4 className="truncate text-sm font-bold text-white">{student.name}</h4>
                           <p className="truncate text-xs text-slate-500">{student.email}</p>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
-                        <div className="rounded-2xl bg-white/5 p-3">
+                        <div className="rounded-2xl bg-accent-purple/[0.06] p-3">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Avg Score</p>
                           <p className="mt-1 text-lg font-bold text-accent-cyan">{progress?.avgScore || 0}%</p>
                         </div>
-                        <div className="rounded-2xl bg-white/5 p-3">
+                        <div className="rounded-2xl bg-accent-purple/[0.06] p-3">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Progress</p>
                           <p className="mt-1 text-lg font-bold text-accent-purple">{progress?.progressPercentage || 0}%</p>
                         </div>
@@ -850,8 +888,8 @@ export function AdminConsole() {
           <PremiumCard eyebrow="Catalog" title="All Courses" description="Platform course catalog management.">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mt-4">
               {courses.map(course => (
-                <div key={course.id} className="rounded-2xl border border-white/5 bg-white/5 p-5">
-                  <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-purple/10 text-accent-purple">
+                <div key={course.id} className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-5">
+                  <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-purple/10 text-accent-purple ring-1 ring-inset ring-accent-purple/20 backdrop-blur-sm">
                     <BookOpen size={20} />
                   </div>
                   <h3 className="text-sm font-bold text-white">{course.title}</h3>
@@ -859,14 +897,14 @@ export function AdminConsole() {
                   <div className="mt-4 flex items-center justify-between">
                     <span className={cn(
                       "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest",
-                      course.isPublished ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                      course.isPublished ? "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm" : "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm"
                     )}>
                       {course.isPublished ? "Published" : "Draft"}
                     </span>
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="text-slate-500 hover:text-white"
+                      className="text-accent-purple hover:text-violet-700"
                       onClick={() => setEditingCourse({ ...course })}
                     >
                       Edit
@@ -924,23 +962,23 @@ export function AdminConsole() {
         {activeTab === "analytics" && (
           <PremiumCard eyebrow="Analytics" title="System Performance" description="Real-time platform usage and data.">
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-2xl bg-white/5 p-4">
+              <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Lectures</p>
                 <p className="mt-2 text-2xl font-bold text-white">{lectures.length}</p>
               </div>
-              <div className="rounded-2xl bg-white/5 p-4">
+              <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Approved Quizzes</p>
                 <p className="mt-2 text-2xl font-bold text-white">{quizzes.length}</p>
               </div>
-              <div className="rounded-2xl bg-white/5 p-4">
+              <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Pending Staff</p>
-                <p className="mt-2 text-2xl font-bold text-amber-300">
+                <p className="mt-2 text-2xl font-bold text-amber-600">
                   {pendingApprovals.length}
                 </p>
               </div>
-              <div className="rounded-2xl bg-white/5 p-4">
+              <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Tracked Students</p>
-                <p className="mt-2 text-2xl font-bold text-cyan-300">{studentProgress.length}</p>
+                <p className="mt-2 text-2xl font-bold text-cyan-600">{studentProgress.length}</p>
               </div>
             </div>
           </PremiumCard>
@@ -949,12 +987,58 @@ export function AdminConsole() {
         {activeTab === "settings" && (
           <PremiumCard eyebrow="Configuration" title="Platform Settings" description="Global system configuration.">
             <div className="mt-4 space-y-6">
-              <div className="rounded-2xl border border-white/5 bg-white/5 p-6">
-                <h4 className="text-sm font-bold text-white">Maintenance Mode</h4>
-                <p className="text-xs text-slate-500 mt-1">Restrict platform access for scheduled updates.</p>
-                <Button variant="secondary" size="sm" className="mt-4">
-                  Enable Mode
-                </Button>
+              <div className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Maintenance Mode</h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Restrict platform access for scheduled updates. Only admin accounts can sign in while enabled.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={maintenanceEnabled}
+                    onClick={() => updateMaintenance(!maintenanceEnabled, maintenanceMessage)}
+                    disabled={maintenanceSaving}
+                    className={cn(
+                      "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400/40 disabled:opacity-50",
+                      maintenanceEnabled ? "bg-amber-500" : "bg-slate-600",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+                        maintenanceEnabled ? "translate-x-6" : "translate-x-1",
+                      )}
+                    />
+                  </button>
+                </div>
+                <div className="mt-5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                    Maintenance Message
+                  </label>
+                  <Textarea
+                    value={messageInput}
+                    onChange={(e) => setMessageInput(e.target.value)}
+                    placeholder="Message shown to users while maintenance mode is active"
+                    rows={3}
+                    className="mt-2"
+                  />
+                  <div className="mt-3 flex items-center gap-3">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => updateMaintenance(maintenanceEnabled, messageInput)}
+                      disabled={maintenanceSaving}
+                    >
+                      {maintenanceSaving ? "Saving..." : "Save Message"}
+                    </Button>
+                    {maintenanceMessageSaved ? (
+                      <span className="text-xs text-emerald-600">Saved</span>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </div>
           </PremiumCard>
@@ -969,9 +1053,9 @@ export function AdminConsole() {
         )}
 
         {editingCourse && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-ink-900 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-white/10 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-900 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Course Catalog</p>
                   <h2 className="mt-2 text-2xl font-bold text-white">Edit Course</h2>
@@ -980,7 +1064,7 @@ export function AdminConsole() {
                 <button
                   type="button"
                   onClick={() => setEditingCourse(null)}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:text-rose-600"
                 >
                   <X size={18} />
                 </button>
@@ -1016,7 +1100,7 @@ export function AdminConsole() {
                   <label className="text-xs font-bold uppercase tracking-wider text-slate-500">Description</label>
                   <Textarea className="mt-2 min-h-32" value={editingCourse.description ?? ""} onChange={(e) => setEditingCourse({ ...editingCourse, description: e.target.value })} />
                 </div>
-                <div className="flex justify-end gap-3 border-t border-white/10 pt-5">
+                <div className="flex justify-end gap-3 border-t border-accent-purple/15 pt-5">
                   <Button type="button" variant="ghost" onClick={() => setEditingCourse(null)}>Cancel</Button>
                   <Button type="submit" variant="solid" disabled={isProcessing}>{isProcessing ? "Saving..." : "Save Changes"}</Button>
                 </div>
@@ -1026,15 +1110,15 @@ export function AdminConsole() {
         )}
 
         {selectedStaffUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-ink-900 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-white/10 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-900 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Staff Profile</p>
                   <h2 className="mt-2 text-2xl font-bold text-white">{selectedStaffUser.name}</h2>
                   <p className="mt-1 text-sm text-slate-400">Teacher account details</p>
                 </div>
-                <button onClick={() => setSelectedStaffUser(null)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"><X size={18} /></button>
+                <button onClick={() => setSelectedStaffUser(null)} className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:text-rose-600"><X size={18} /></button>
               </div>
               <div className="space-y-5 p-6">
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -1047,9 +1131,9 @@ export function AdminConsole() {
                     ["Joined", formatDateTime(selectedStaffUser.createdAt)],
                     ["Last Login", selectedStaffUser.lastLoginAt ? formatDateTime(selectedStaffUser.lastLoginAt) : "Never"],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl border border-white/10 bg-white/[0.035] p-4">
+                    <div key={label} className="rounded-xl border border-accent-purple/15 bg-accent-purple/[0.05] p-4">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{label}</p>
-                      <p className="mt-2 break-words text-sm font-medium text-slate-200">{value}</p>
+                      <p className="mt-2 break-words text-sm font-medium text-slate-700">{value}</p>
                     </div>
                   ))}
                 </div>
@@ -1063,9 +1147,9 @@ export function AdminConsole() {
         )}
 
         {selectedStaffInvitation && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4 backdrop-blur-sm">
-            <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-white/10 bg-ink-950 shadow-2xl">
-              <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+            <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-950 shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Staff Application</p>
                   <h2 className="mt-2 text-2xl font-bold text-white">{selectedStaffInvitation.name}</h2>
@@ -1077,7 +1161,7 @@ export function AdminConsole() {
                 </div>
                 <button
                   onClick={() => setSelectedStaffInvitation(null)}
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-400 transition hover:bg-white/10 hover:text-white"
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:text-rose-600"
                 >
                   <X size={18} />
                 </button>
@@ -1085,28 +1169,28 @@ export function AdminConsole() {
 
               <div className="max-h-[calc(92vh-112px)] space-y-6 overflow-y-auto p-6">
                 <div className="grid gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-4">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Status</p>
                     <div className="mt-3">
                       <span className={cn(
                         "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
-                        selectedStaffInvitation.status === "APPROVED" && "bg-emerald-500/10 text-emerald-300",
-                        selectedStaffInvitation.status === "SUBMITTED" && "bg-amber-500/10 text-amber-300",
-                        selectedStaffInvitation.status === "INVITED" && "bg-accent-cyan/10 text-accent-cyan",
+                        selectedStaffInvitation.status === "APPROVED" && "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm",
+                        selectedStaffInvitation.status === "SUBMITTED" && "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm",
+                        selectedStaffInvitation.status === "INVITED" && "bg-accent-cyan/10 text-accent-cyan ring-1 ring-inset ring-accent-cyan/20 backdrop-blur-sm",
                         selectedStaffInvitation.status === "REVISION_REQUESTED" && "bg-purple-500/10 text-purple-300",
-                        selectedStaffInvitation.status === "REJECTED" && "bg-rose-500/10 text-rose-300",
+                        selectedStaffInvitation.status === "REJECTED" && "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm",
                       )}>
                         {selectedStaffInvitation.status.replace(/_/g, " ")}
                       </span>
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-4">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Submitted</p>
                     <p className="mt-3 text-sm font-semibold text-white">
                       {selectedStaffInvitation.submittedAt ? formatDateTime(selectedStaffInvitation.submittedAt) : "Not submitted yet"}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                  <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-4">
                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Documents</p>
                     <p className="mt-3 text-sm font-semibold text-white">
                       {selectedStaffInvitation.documentLinks?.length || 0} file(s)
@@ -1115,16 +1199,16 @@ export function AdminConsole() {
                 </div>
 
                 <div className="grid gap-5 lg:grid-cols-2">
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                  <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.05] p-5">
                     <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
                       <FileText size={14} />
                       Education & Experience
                     </div>
                     <div className="grid gap-3">
                       {parseSubmittedDetails(selectedStaffInvitation.educationDetails).map((item, index) => (
-                        <div key={`${item.label}-${index}`} className="rounded-xl bg-white/[0.04] p-3">
+                        <div key={`${item.label}-${index}`} className="rounded-xl bg-accent-purple/[0.06] p-3">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.label}</p>
-                          <p className="mt-1 text-sm text-slate-200">{item.value}</p>
+                          <p className="mt-1 text-sm text-slate-700">{item.value}</p>
                         </div>
                       ))}
                       {!selectedStaffInvitation.educationDetails && (
@@ -1133,16 +1217,16 @@ export function AdminConsole() {
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                  <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.05] p-5">
                     <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
                       <AlertCircle size={14} />
                       Personal Details
                     </div>
                     <div className="grid gap-3">
                       {parseSubmittedDetails(selectedStaffInvitation.personalDetails).map((item, index) => (
-                        <div key={`${item.label}-${index}`} className="rounded-xl bg-white/[0.04] p-3">
+                        <div key={`${item.label}-${index}`} className="rounded-xl bg-accent-purple/[0.06] p-3">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.label}</p>
-                          <p className="mt-1 text-sm text-slate-200">{item.value}</p>
+                          <p className="mt-1 text-sm text-slate-700">{item.value}</p>
                         </div>
                       ))}
                       {!selectedStaffInvitation.personalDetails && (
@@ -1154,7 +1238,7 @@ export function AdminConsole() {
 
                 <StaffCoursesPanel assignments={staffCourseAssignments} loading={staffCoursesLoading} />
 
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.05] p-5">
                   <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Documents</p>
                   {selectedStaffInvitation.documentLinks?.length ? (
                     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1171,7 +1255,7 @@ export function AdminConsole() {
                             className="group rounded-xl border border-accent-cyan/20 bg-accent-cyan/10 p-4 transition hover:bg-accent-cyan/20 hover:text-white"
                           >
                             <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink-950/70 text-accent-cyan group-hover:text-white">
+                              <div className="flex h-9 w-9 items-center justify-center rounded-lg text-accent-cyan group-hover:text-cyan-600">
                                 <FileText size={16} />
                               </div>
                               <div className="min-w-0">
@@ -1197,7 +1281,7 @@ export function AdminConsole() {
                 )}
 
                 {selectedStaffInvitation.status === "SUBMITTED" && (
-                  <div className="flex flex-wrap justify-end gap-2 border-t border-white/10 pt-5">
+                  <div className="flex flex-wrap justify-end gap-2 border-t border-accent-purple/15 pt-5">
                     <Button size="sm" variant="success" disabled={isProcessing} onClick={() => reviewStaffInvitation(selectedStaffInvitation.id, "APPROVED")}>
                       Approve
                     </Button>
@@ -1220,7 +1304,7 @@ export function AdminConsole() {
 
 function StaffCoursesPanel({ assignments, loading }: { assignments: StaffCourseAssignment[]; loading: boolean }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+    <div className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.05] p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-500">
           <BookOpen size={15} /> Assigned Courses
@@ -1242,7 +1326,7 @@ function StaffCoursesPanel({ assignments, loading }: { assignments: StaffCourseA
                 </div>
                 <span className={cn("h-2 w-2 shrink-0 rounded-full", assignment.isActive ? "bg-emerald-400" : "bg-slate-600")} />
               </div>
-              <div className="mt-3 border-t border-white/10 pt-3">
+              <div className="mt-3 border-t border-accent-purple/15 pt-3">
                 <p className="text-xs font-medium text-accent-cyan">{assignment.className}</p>
                 <p className="mt-1 text-xs text-slate-500">Section {assignment.sectionName}</p>
               </div>
@@ -1250,7 +1334,7 @@ function StaffCoursesPanel({ assignments, loading }: { assignments: StaffCourseA
           ))}
         </div>
       ) : (
-        <div className="rounded-xl border border-dashed border-white/10 py-7 text-center text-sm text-slate-500">
+        <div className="rounded-xl border border-dashed border-accent-purple/15 py-7 text-center text-sm text-slate-500">
           No courses are assigned to this staff member.
         </div>
       )}

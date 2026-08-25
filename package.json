@@ -7,8 +7,10 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspaces --if-present",
-    "dev:client": "npm run dev -w @smart-academy/web",
+    "dev:client": "npm run clean:client && npm run dev -w @smart-academy/web",
+    "clean:client": "node -e \"require('fs').rmSync('client/.next',{recursive:true,force:true})\"",
     "dev:server": "npm run start:dev -w @smart-academy/api",
+    "start:ml": "cd server/src/ml/service && python -m uvicorn app:app --host 127.0.0.1 --port 8005",
     "build": "npm run build --workspaces --if-present",
     "build:client": "npm run build -w @smart-academy/web",
     "build:server": "npm run build -w @smart-academy/api"

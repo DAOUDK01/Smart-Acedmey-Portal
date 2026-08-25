@@ -28,18 +28,10 @@ async function ensureUser({ role, name, email, password }) {
   });
 }
 
-async function ensureCourse({
-  teacherId,
-  code,
-  title,
-  description,
-  level,
-  sortOrder,
-}) {
+async function ensureCourse({ code, title, description, level, sortOrder }) {
   return prisma.course.upsert({
     where: { code },
     update: {
-      teacherId,
       title,
       description,
       level,
@@ -47,7 +39,6 @@ async function ensureCourse({
       sortOrder,
     },
     create: {
-      teacherId,
       code,
       title,
       description,
@@ -187,13 +178,6 @@ async function main() {
     password: "Teacher@123",
   });
 
-  const expert = await ensureUser({
-    role: UserRole.EXPERT,
-    name: "Expert Starter",
-    email: "expert@smartacademy.local",
-    password: "Expert@123",
-  });
-
   const student = await ensureUser({
     role: UserRole.STUDENT,
     name: "Student Starter",
@@ -201,8 +185,21 @@ async function main() {
     password: "Student@123",
   });
 
+  const guardian = await ensureUser({
+    role: UserRole.GUARDIAN,
+    name: "Guardian Starter",
+    email: "guardian@smartscademy.local",
+    password: "Guardian@123",
+  });
+
+  const guardianAlias = await ensureUser({
+    role: UserRole.GUARDIAN,
+    name: "Guardian Starter",
+    email: "guardian@smartacademy.local",
+    password: "Guardian@123",
+  });
+
   const oopCourse = await ensureCourse({
-    teacherId: teacher.id,
     code: "CS-101",
     title: "Object Oriented Programming",
     description: "Core OOP principles with practical classroom examples.",
@@ -211,7 +208,6 @@ async function main() {
   });
 
   const webCourse = await ensureCourse({
-    teacherId: teacher.id,
     code: "WEB-201",
     title: "Modern Web Development",
     description: "Client-server foundations, APIs, and deployment basics.",
@@ -306,7 +302,7 @@ async function main() {
     }),
   ]);
 
-  await Promise.all([
+  const quizResults = await Promise.all([
     ensureQuiz({
       lectureId: oopLecture1.id,
       question: "What is the main purpose of encapsulation?",
@@ -347,11 +343,56 @@ async function main() {
       timestamp: 110,
     }),
   ]);
+  const [encapsulationQuiz, polymorphismQuiz, httpQuiz] = quizResults;
+
+  const academicClass = await prisma.academicClass.upsert({
+    where: { code: "BSCS-F2026" },
+    update: {
+      name: "BS Computer Science",
+      academicYear: "2026-2027",
+      description: "Core computer science cohort for the 2026-2027 academic year.",
+      isActive: true,
+    },
+    create: {
+      name: "BS Computer Science",
+      code: "BSCS-F2026",
+      academicYear: "2026-2027",
+      description: "Core computer science cohort for the 2026-2027 academic year.",
+      isActive: true,
+    },
+  });
+
+  let section = await prisma.classSection.findFirst({
+    where: { classId: academicClass.id, name: "A" },
+  });
+  if (!section) {
+    section = await prisma.classSection.create({
+      data: {
+        classId: academicClass.id,
+        name: "A",
+        capacity: 30,
+        isActive: true,
+      },
+    });
+  }
+
+  await Promise.all([
+    prisma.sectionCourseAssignment.upsert({
+      where: { sectionId_courseId: { sectionId: section.id, courseId: oopCourse.id } },
+      update: { teacherId: teacher.id, isActive: true },
+      create: { sectionId: section.id, courseId: oopCourse.id, teacherId: teacher.id, isActive: true },
+    }),
+    prisma.sectionCourseAssignment.upsert({
+      where: { sectionId_courseId: { sectionId: section.id, courseId: webCourse.id } },
+      update: { teacherId: teacher.id, isActive: true },
+      create: { sectionId: section.id, courseId: webCourse.id, teacherId: teacher.id, isActive: true },
+    }),
+  ]);
 
   await prisma.studentProgress.upsert({
-    where: { studentId: student.id },
+    where: { studentId: student.email },
     update: {
-      guardianName: "Starter Guardian",
+      guardianName: "Guardian Starter",
       currentCourseId: oopCourse.id,
       currentLectureId: oopLecture1.id,
       avgScore: 75,
@@ -360,13 +401,13 @@ async function main() {
       completedLectures: 1,
       completedCheckpoints: 2,
       lockedCheckpoints: 1,
-      failedQuizzes: 0,
+      failedQuizzes: 1,
       weakTopics: ["Polymorphism"],
       lastActivityAt: new Date(),
     },
     create: {
-      studentId: student.id,
-      guardianName: "Starter Guardian",
+      studentId: student.email,
+      guardianName: "Guardian Starter",
       currentCourseId: oopCourse.id,
       currentLectureId: oopLecture1.id,
       avgScore: 75,
@@ -375,17 +416,98 @@ async function main() {
       completedLectures: 1,
       completedCheckpoints: 2,
       lockedCheckpoints: 1,
-      failedQuizzes: 0,
+      failedQuizzes: 1,
       weakTopics: ["Polymorphism"],
       lastActivityAt: new Date(),
     },
   });
+
+  await prisma.guardianStudentLink.upsert({
+    where: {
+      guardianId_studentId: { guardianId: guardian.id, studentId: student.email },
+    },
+    update: {
+      guardianEmail: guardian.email,
+      studentEmail: student.email,
+    },
+    create: {
+      guardianId: guardian.id,
+      studentId: student.email,
+      guardianEmail: guardian.email,
+      studentEmail: student.email,
+    },
+  });
+
+  await prisma.guardianStudentLink.upsert({
+    where: {
+      guardianId_studentId: { guardianId: guardianAlias.id, studentId: student.email },
+    },
+    update: {
+      guardianEmail: guardianAlias.email,
+      studentEmail: student.email,
+    },
+    create: {
+      guardianId: guardianAlias.id,
+      studentId: student.email,
+      guardianEmail: guardianAlias.email,
+      studentEmail: student.email,
+    },
+  });
+
+  await prisma.quizAttempt.deleteMany({ where: { studentId: student.email } });
+  await Promise.all([
+    prisma.quizAttempt.create({
+      data: {
+        studentId: student.email,
+        quizId: encapsulationQuiz.id,
+        score: 100,
+        responseTime: 24,
+        passed: true,
+        attemptNumber: 1,
+        submittedAt: new Date(Date.now() - 3 * 86400000),
+      },
+    }),
+    prisma.quizAttempt.create({
+      data: {
+        studentId: student.email,
+        quizId: encapsulationQuiz.id,
+        score: 100,
+        responseTime: 18,
+        passed: true,
+        attemptNumber: 2,
+        submittedAt: new Date(Date.now() - 2 * 86400000),
+      },
+    }),
+    prisma.quizAttempt.create({
+      data: {
+        studentId: student.email,
+        quizId: polymorphismQuiz.id,
+        score: 0,
+        responseTime: 2,
+        passed: false,
+        attemptNumber: 1,
+        submittedAt: new Date(Date.now() - 86400000),
+      },
+    }),
+    prisma.quizAttempt.create({
+      data: {
+        studentId: student.email,
+        quizId: httpQuiz.id,
+        score: 100,
+        responseTime: 30,
+        passed: true,
+        attemptNumber: 1,
+        submittedAt: new Date(Date.now() - 6 * 3600000),
+      },
+    }),
+  ]);
 
   console.log("Seed complete.");
   console.log("Starter accounts:");
   console.log("- admin@smartacademy.local / Admin@123");
   console.log("- teacher@smartacademy.local / Teacher@123");
   console.log("- student@smartacademy.local / Student@123");
+  console.log("- guardian@smartscademy.local / Guardian@123 (also guardian@smartacademy.local)");
   console.log(`Seed owner: ${admin.email}`);
 }
 

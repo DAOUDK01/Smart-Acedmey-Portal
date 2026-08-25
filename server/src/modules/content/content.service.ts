@@ -1,7 +1,11 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "crypto";
+import { join } from "path";
+import { existsSync, rmSync } from "fs";
 import { PrismaService } from "../../prisma.service";
+import { HlsProcessingService } from "./hls-processing.service";
+import { TranscriptionService } from "./transcription.service";
 import {
   buildFallbackTranscript,
   buildStructuredTranscript,
@@ -21,7 +25,11 @@ import {
 
 @Injectable()
 export class ContentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly hlsProcessing: HlsProcessingService,
+    private readonly transcription: TranscriptionService,
+  ) {}
 
   listCourses() {
     return this.prisma.$queryRaw`
@@ -59,11 +67,40 @@ export class ContentService {
     return { success: true };
   }
 
-  listLectures() {
-    return this.prisma.lecture.findMany({ orderBy: { createdAt: "desc" } });
+  async listLectures() {
+    const lectures = await this.prisma.lecture.findMany({
+      orderBy: { createdAt: "desc" },
+    });
+    const checkpoints = await this.prisma.checkpoint.findMany({
+      orderBy: { sortOrder: "asc" },
+    });
+    const byLecture = new Map<string, Array<{ id: string; lectureId: string; title: string; timestamp: number; requiredQuizId: string | null; sortOrder: number; unlockScore: number; isBlocking: boolean; isPublished: boolean }>>();
+    for (const checkpoint of checkpoints) {
+      const list = byLecture.get(checkpoint.lectureId) ?? [];
+      list.push(checkpoint);
+      byLecture.set(checkpoint.lectureId, list);
+    }
+    return lectures.map((lecture) => ({
+      ...lecture,
+      checkpoints: byLecture.get(lecture.id) ?? [],
+    }));
   }
 
-  async generateTranscriptForVideo(title: string, videoUrl: string): Promise<string> {
+  async generateTranscriptForVideo(
+    title: string,
+    videoUrl: string,
+    filePath?: string,
+  ): Promise<string> {
+    if (filePath && existsSync(filePath)) {
+      const realTranscript = await this.transcription.transcribeVideoFile(filePath);
+      if (realTranscript?.trim()) return realTranscript.trim();
+    }
+
+    if (videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be")) {
+      const realTranscript = await this.transcription.transcribeYouTube(videoUrl);
+      if (realTranscript?.trim()) return realTranscript.trim();
+    }
+
     const prompt = `You are an AI video transcriber. Generate a realistic lecture transcript for "${title}".
 Return exactly 3 segments separated by blank lines. Label each segment implicitly by paragraph order:
 1) introduction and motivation
@@ -127,9 +164,22 @@ Return ONLY the transcript text without headings or markdown.`;
   }
 
   async createLecture(body: CreateLectureDto) {
+    const isYouTubeSource =
+      body.videoUrl.includes("youtube.com") || body.videoUrl.includes("youtu.be");
+    const isUploadedSource = body.videoUrl.startsWith("/uploads/");
+
     let transcript = body.transcript;
     if (!transcript || !transcript.trim()) {
-      transcript = await this.generateTranscriptForVideo(body.title, body.videoUrl);
+      if (isUploadedSource) {
+        const sourcePath = this.resolveUploadedSourcePath(body.videoUrl);
+        if (existsSync(sourcePath)) {
+          const realTranscript = await this.transcription.transcribeVideoFile(sourcePath);
+          if (realTranscript?.trim()) transcript = realTranscript.trim();
+        }
+      }
+      if (!transcript || !transcript.trim()) {
+        transcript = await this.generateTranscriptForVideo(body.title, body.videoUrl);
+      }
     }
 
     const durationMinutes = body.durationMinutes ?? 10;
@@ -157,15 +207,28 @@ Return ONLY the transcript text without headings or markdown.`;
         durationMinutes,
         videoProvider:
           body.videoProvider ??
-          (body.videoUrl.includes("youtube.com") || body.videoUrl.includes("youtu.be")
-            ? "YouTube"
-            : "Upload"),
+          (isYouTubeSource ? "YouTube" : "Upload"),
+        sourceType: isYouTubeSource ? "YOUTUBE" : "UPLOAD",
+        processingStatus: isUploadedSource ? "PROCESSING" : null,
+        processingProgress: isUploadedSource ? 5 : null,
         isCheckpointLocked,
         publishedAt,
       },
     });
 
-    const segments = splitTranscriptIntoSegments(structuredTranscript, durationSeconds, 3);
+    if (isUploadedSource) {
+      const sourcePath = this.resolveUploadedSourcePath(lecture.videoUrl);
+      this.hlsProcessing.startProcessing(lecture.id, sourcePath, lecture.videoUrl);
+    }
+
+    const segments =
+      body.segments && body.segments.length > 0
+        ? body.segments.map((segment, index) => ({
+            ...segment,
+            label: segment.label || `Segment ${index + 1}`,
+            timestamp: Math.max(5, Number(segment.timestamp) || 0),
+          }))
+        : splitTranscriptIntoSegments(structuredTranscript, durationSeconds, 3);
 
     await this.prisma.checkpoint.createMany({
       data: segments.map((segment, index) => ({
@@ -190,24 +253,149 @@ Return ONLY the transcript text without headings or markdown.`;
       return this.createLecture(body as any);
     }
 
-    return this.prisma.lecture.update({
+    const nextVideoUrl = typeof payload.videoUrl === "string" ? payload.videoUrl : lecture.videoUrl;
+    const isYouTubeSource = /(?:youtube\.com|youtu\.be)/i.test(nextVideoUrl);
+    const isUploadedSource = nextVideoUrl.startsWith("/uploads/");
+    const sourceChanged = lecture.videoUrl !== nextVideoUrl;
+    const replacingUpload = lecture.videoUrl.startsWith("/uploads/") && !isUploadedSource;
+
+    const updated = await this.prisma.lecture.update({
       where: { id },
       data: {
-        courseId: payload.courseId,
-        videoUrl: payload.videoUrl,
-        transcript: payload.transcript,
-        title: payload.title,
-        lectureOrder: payload.lectureOrder,
-        durationMinutes: payload.durationMinutes,
-        videoProvider: payload.videoProvider,
-        isCheckpointLocked: payload.isCheckpointLocked,
+        courseId: payload.courseId ?? lecture.courseId,
+        videoUrl: nextVideoUrl,
+        transcript: payload.transcript ?? lecture.transcript,
+        title: payload.title ?? lecture.title,
+        lectureOrder: payload.lectureOrder ?? lecture.lectureOrder,
+        durationMinutes: payload.durationMinutes ?? lecture.durationMinutes,
+        videoProvider: isYouTubeSource ? "YouTube" : isUploadedSource ? "Upload" : payload.videoProvider ?? lecture.videoProvider,
+        sourceType: isYouTubeSource ? "YOUTUBE" : isUploadedSource ? "UPLOAD" : lecture.sourceType,
+        hlsMasterUrl: isUploadedSource && !sourceChanged ? lecture.hlsMasterUrl : null,
+        thumbnailUrl: isYouTubeSource ? null : lecture.thumbnailUrl,
+        processingStatus: isUploadedSource && !sourceChanged ? lecture.processingStatus : null,
+        processingProgress: isUploadedSource && !sourceChanged ? lecture.processingProgress : null,
+        processingError: isUploadedSource && !sourceChanged ? lecture.processingError : null,
+        isCheckpointLocked: payload.isCheckpointLocked ?? lecture.isCheckpointLocked,
         publishedAt: payload.publishedAt === null ? null : payload.publishedAt ? new Date(payload.publishedAt) : undefined,
+      },
+    });
+
+    if (sourceChanged && lecture.videoUrl.startsWith("/uploads/")) {
+      const hlsDir = join(process.cwd(), "uploads", "hls", id);
+      if (existsSync(hlsDir)) rmSync(hlsDir, { recursive: true, force: true });
+    }
+
+    if (payload.segments?.length) {
+      const segments = payload.segments.map((segment: any, index: number) => ({
+        label: segment.label || `Segment ${index + 1}`,
+        timestamp: Math.max(5, Number(segment.timestamp) || 0),
+      }));
+      const existing = await this.prisma.checkpoint.findMany({
+        where: { lectureId: id },
+        orderBy: { sortOrder: "asc" },
+      });
+
+      for (const [index, segment] of segments.entries()) {
+        const data = {
+          title: `${segment.label} Checkpoint`,
+          timestamp: segment.timestamp,
+          sortOrder: index + 1,
+          unlockScore: 70,
+          isBlocking: true,
+          isPublished: true,
+        };
+        if (existing[index]) {
+          await this.prisma.checkpoint.update({
+            where: { id: existing[index].id },
+            data,
+          });
+        } else {
+          await this.prisma.checkpoint.create({
+            data: { lectureId: id, ...data },
+          });
+        }
+      }
+    }
+
+    if (
+      isUploadedSource &&
+      updated.processingStatus !== "READY" &&
+      updated.processingStatus !== "PROCESSING"
+    ) {
+      const sourcePath = this.resolveUploadedSourcePath(updated.videoUrl);
+      if (existsSync(sourcePath)) {
+        await this.prisma.lecture.update({
+          where: { id },
+          data: { sourceType: "UPLOAD", processingStatus: "PROCESSING", processingProgress: 5, processingError: null },
+        });
+        this.hlsProcessing.startProcessing(id, sourcePath, updated.videoUrl);
+      }
+    }
+
+    return updated;
+  }
+
+  async deleteLecture(id: string) {
+    const lecture = await this.prisma.lecture.findUnique({ where: { id } });
+
+    if (lecture && lecture.videoUrl.startsWith("/uploads/")) {
+      const hlsDir = join(process.cwd(), "uploads", "hls", id);
+      try {
+        if (existsSync(hlsDir)) {
+          rmSync(hlsDir, { recursive: true, force: true });
+        }
+      } catch {
+        // best-effort cleanup
+      }
+    }
+
+    return this.prisma.lecture.delete({ where: { id } });
+  }
+
+  resolveUploadedSourcePath(videoUrl: string) {
+    const relative = videoUrl.replace(/^\/uploads\//, "");
+    return join(process.cwd(), "uploads", relative);
+  }
+
+  listProcessingLectures() {
+    return this.prisma.lecture.findMany({
+      where: {
+        sourceType: "UPLOAD",
+        processingStatus: { notIn: ["READY"] },
+      },
+      select: {
+        id: true,
+        processingStatus: true,
+        processingProgress: true,
+        processingError: true,
+        hlsMasterUrl: true,
+        thumbnailUrl: true,
       },
     });
   }
 
-  deleteLecture(id: string) {
-    return this.prisma.lecture.delete({ where: { id } });
+  async retryLectureProcessing(id: string) {
+    const lecture = await this.prisma.lecture.findUnique({ where: { id } });
+
+    if (!lecture) {
+      throw new NotFoundException("Lecture not found");
+    }
+
+    if (lecture.processingStatus === "PROCESSING") {
+      return { ok: false, message: "Video is already being processed." };
+    }
+
+    if (lecture.sourceType !== "UPLOAD" && !lecture.videoUrl.startsWith("/uploads/")) {
+      return { ok: false, message: "Only uploaded videos can be processed." };
+    }
+
+    const sourcePath = this.resolveUploadedSourcePath(lecture.videoUrl);
+    if (!existsSync(sourcePath)) {
+      throw new NotFoundException("Original video file is missing.");
+    }
+
+    this.hlsProcessing.startProcessing(id, sourcePath, lecture.videoUrl);
+    return { ok: true };
   }
 
   listCheckpoints() {

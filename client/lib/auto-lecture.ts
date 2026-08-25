@@ -1,5 +1,5 @@
 // Lightweight client helpers for auto-transcript extraction and quiz generation.
-import { loadAccessToken } from "@/lib/session";
+import { authenticatedFetch } from "@/lib/api";
 
 export async function extractTranscriptFromUrl(
   url: string,
@@ -41,7 +41,7 @@ export async function extractTranscriptFromFile(
       const cleaned = text
         .replace(/\d{2}:\d{2}:\d{2},?\d{0,3}/g, " ")
         .replace(/\d+\n/g, " ");
-      return { transcript: cleaned.slice(0, 200) };
+      return { transcript: cleaned.trim() };
     } catch {
       return null;
     }
@@ -50,15 +50,14 @@ export async function extractTranscriptFromFile(
   try {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${apiBase}/api/teacher/transcribe`, {
+    const res = await authenticatedFetch(`${apiBase}/api/teacher/transcribe`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${loadAccessToken() ?? ""}` },
       body: form,
     });
     if (res.ok) {
       const payload = await res.json();
       return {
-        transcript: String(payload?.transcript || "").slice(0, 200),
+        transcript: String(payload?.transcript || "").trim(),
         videoUrl: payload?.videoUrl,
       };
     }
@@ -82,11 +81,10 @@ export async function autoGenerateQuizForDraft({
   questionCount?: number;
   apiBase?: string;
 }) {
-  const res = await fetch(apiBase, {
+  const res = await authenticatedFetch(apiBase, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${loadAccessToken() ?? ""}`,
     },
     body: JSON.stringify({ topic, transcript, lectureId, questionCount }),
   });

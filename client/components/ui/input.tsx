@@ -8,8 +8,8 @@ import {
 
 export function inputVariants(className?: string) {
   return cn(
-    "w-full rounded-xl border border-white/10 bg-ink-900 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500",
-    "focus:border-accent-purple/50 focus:ring-1 focus:ring-accent-purple/50",
+    "w-full rounded-xl border border-accent-purple/15 bg-accent-purple/[0.05] px-4 py-3 text-sm text-slate-900 outline-none transition-all duration-200 placeholder:text-slate-400",
+    "shadow-sm hover:border-accent-purple/30 focus:border-accent-cyan focus:ring-2 focus:ring-accent-cyan/30",
     "disabled:cursor-not-allowed disabled:opacity-50",
     className,
   );

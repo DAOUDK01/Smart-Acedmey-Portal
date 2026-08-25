@@ -49,3 +49,7 @@ coverage/
 .gitignore
 SRC_SmartAcademy_SRS.docx
 SDD_SmartAcademy.docx
+
+server/src/ml/service/.venv/
+server/src/ml/**/__pycache__/
+*.pkl

@@ -1,8 +1,9 @@
 import { Injectable, ConflictException, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../../prisma.service";
-import { CompleteStaffRegistrationDto, CreateUserDto, InviteStaffDto, ReviewStaffInvitationDto, UpdateUserDto } from "./user.dto";
+import { ChangePasswordDto, CompleteStaffRegistrationDto, CreateUserDto, InviteStaffDto, ReviewStaffInvitationDto, UpdateMeDto, UpdateUserDto } from "./user.dto";
 import { createHash, randomBytes } from "crypto";
 import { EmailService } from "../auth/email.service";
+import { GuardianService } from "../guardian/guardian.service";
 
 type StaffInvitationRecord = {
   id: string;
@@ -23,6 +24,7 @@ export class UserService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly guardianService: GuardianService,
   ) {}
 
   private hashPassword(password: string): string {
@@ -355,10 +357,64 @@ export class UserService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException("User not found");
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id },
       data: body as any,
     });
+
+    if (
+      user.role === "STUDENT" &&
+      !user.isActive &&
+      updated.isActive &&
+      body.isActive === true
+    ) {
+      await this.guardianService.issueCredentialsForStudent(user.email);
+    }
+
+    return updated;
+  }
+
+  async getCurrentUser(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+
+    const { passwordHash, ...profile } = user;
+    return profile;
+  }
+
+  async updateCurrentUser(userId: string, body: UpdateMeDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.phoneNumber !== undefined ? { phoneNumber: body.phoneNumber } : {}),
+        ...(body.avatarUrl !== undefined ? { avatarUrl: body.avatarUrl } : {}),
+      },
+      select: { id: true, name: true, email: true, role: true, phoneNumber: true, avatarUrl: true, isActive: true },
+    });
+  }
+
+  async changePassword(userId: string, body: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+
+    if (!user.passwordHash || user.passwordHash !== this.hashPassword(body.currentPassword)) {
+      throw new BadRequestException("Current password is incorrect");
+    }
+
+    if (body.newPassword.length < 6) {
+      throw new BadRequestException("New password must be at least 6 characters");
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: this.hashPassword(body.newPassword) },
+    });
+
+    return { message: "Password changed successfully" };
   }
 
   async deleteUser(id: string) {

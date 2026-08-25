@@ -1,14 +1,24 @@
 import { IsString, IsOptional, IsInt, IsArray, IsEnum, IsBoolean } from "class-validator";
+import { Transform } from "class-transformer";
 import { QuizStatus } from "@prisma/client";
+
+function normalizeStatus() {
+  return Transform(({ value }) =>
+    typeof value === "string" ? value.toUpperCase() : value,
+  );
+}
 
 export class CreateQuizQuestionDto {
   @IsString()
+  @IsOptional()
   lectureId?: string;
 
   @IsString()
+  @IsOptional()
   sourceTopic?: string;
 
   @IsString()
+  @IsOptional()
   sourceTranscript?: string;
 
   @IsString()
@@ -29,6 +39,7 @@ export class CreateQuizQuestionDto {
 
   @IsEnum(QuizStatus)
   @IsOptional()
+  @normalizeStatus()
   status?: QuizStatus;
 
   @IsString()
@@ -79,6 +90,7 @@ export class UpdateQuizQuestionDto {
 
   @IsEnum(QuizStatus)
   @IsOptional()
+  @normalizeStatus()
   status?: QuizStatus;
 
   @IsString()

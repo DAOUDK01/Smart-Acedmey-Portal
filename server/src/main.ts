@@ -21,10 +21,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix("api", {
-    exclude: [
-      { path: "", method: RequestMethod.GET },
-      { path: "health", method: RequestMethod.GET },
-    ],
+    exclude: [{ path: "", method: RequestMethod.GET }],
   });
   app.useGlobalPipes(
     new ValidationPipe({
@@ -66,9 +63,15 @@ async function bootstrap() {
         res.header("Access-Control-Allow-Origin", requestOrigin);
       }
       res.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-      res.header("Access-Control-Allow-Headers", "Range, Origin, Content-Type, Accept");
-      res.header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
-      
+      res.header(
+        "Access-Control-Allow-Headers",
+        "Range, Origin, Content-Type, Accept",
+      );
+      res.header(
+        "Access-Control-Expose-Headers",
+        "Content-Range, Content-Length, Accept-Ranges",
+      );
+
       // Handle Range Requests manually if needed, but express.static usually does it.
       // We force Accept-Ranges header here.
       res.header("Accept-Ranges", "bytes");
@@ -86,6 +89,10 @@ async function bootstrap() {
           res.header("Content-Type", "video/mp4");
         } else if (path.endsWith(".webm")) {
           res.header("Content-Type", "video/webm");
+        } else if (path.endsWith(".m3u8")) {
+          res.header("Content-Type", "application/vnd.apple.mpegurl");
+        } else if (path.endsWith(".ts")) {
+          res.header("Content-Type", "video/mp2t");
         }
       },
     }),

@@ -14,7 +14,7 @@ export function LogoutButton() {
         clearPortalSession();
         router.replace(loginPath);
       }}
-      className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:bg-white/10"
+      className="rounded-full px-4 py-2 text-sm text-slate-600 transition hover:text-rose-500"
     >
       Sign out
     </button>

@@ -60,6 +60,14 @@ export class CreateLectureDto {
   @IsString()
   @IsOptional()
   videoProvider?: string;
+
+  @IsOptional()
+  segments?: Array<{
+    label: string;
+    text: string;
+    timestamp: number;
+    difficulty: "easy" | "medium" | "hard";
+  }>;
 }
 
 export class UpdateLectureDto extends CreateLectureDto {}

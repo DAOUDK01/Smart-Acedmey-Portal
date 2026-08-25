@@ -282,7 +282,7 @@ export default function StaffRegistrationPage() {
     required?: boolean;
   }) {
     return (
-      <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-accent-cyan/30">
+      <label className="rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.05] p-4 transition hover:border-accent-cyan/30">
         <span className="flex items-center gap-2 text-sm font-semibold text-white">
           <FileUp className="h-4 w-4 text-accent-cyan" />
           {label}
@@ -303,36 +303,36 @@ export default function StaffRegistrationPage() {
   }
 
   return (
-    <main className="min-h-screen bg-ink-950 px-4 py-8 text-white sm:px-6 lg:px-8">
+    <main className="min-h-screen page-canvas px-4 py-8 text-white sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
-        <header className="flex flex-col gap-4 border-b border-white/10 pb-8 sm:flex-row sm:items-center sm:justify-between">
-          <Link href="/" className="flex items-center gap-3 text-lg font-bold text-white">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent-cyan/40 bg-accent-cyan/10">
-              <GraduationCap className="h-5 w-5 text-accent-cyan" />
+        <header className="flex flex-col gap-4 border-b border-accent-purple/15 pb-8 sm:flex-row sm:items-center sm:justify-between">
+          <Link href="/" className="flex items-center gap-3 text-lg font-bold text-slate-900">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent-purple/25 bg-[#ffffff]">
+              <GraduationCap className="h-5 w-5 text-slate-600" />
             </span>
             SmartAcademy
           </Link>
-          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300">
+          <div className="rounded-xl border border-accent-purple/20 bg-accent-purple/[0.05] px-4 py-2 text-sm text-slate-600">
             Staff onboarding portal
           </div>
         </header>
 
         <section className="grid gap-8 py-10 lg:grid-cols-[360px_1fr]">
           <aside className="space-y-6 lg:sticky lg:top-6 lg:self-start">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.35em] text-accent-purple">Staff Registration</p>
+            <div className="glass-panel rounded-2xl p-6">
+              <p className="text-xs font-bold uppercase tracking-[0.35em] text-accent-cyan">Staff Registration</p>
               <h1 className="mt-4 text-4xl font-bold leading-tight text-white">Complete your profile</h1>
               <p className="mt-4 text-sm leading-6 text-slate-400">
                 Provide complete identity, contact, education, experience, and verification documents before admin review.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+            <div className="glass-panel rounded-2xl p-5">
               <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Invitation</p>
               {isLoading ? (
                 <div className="mt-4 space-y-3">
-                  <div className="h-4 w-2/3 rounded bg-white/10" />
-                  <div className="h-4 w-1/2 rounded bg-white/10" />
+                  <div className="h-4 w-2/3 rounded bg-accent-purple/[0.12]" />
+                  <div className="h-4 w-1/2 rounded bg-accent-purple/[0.12]" />
                 </div>
               ) : invitation ? (
                 <div className="mt-4 space-y-4">
@@ -345,9 +345,9 @@ export default function StaffRegistrationPage() {
                   </div>
                   <div className="flex items-center gap-3">
                     <Mail className="h-5 w-5 text-accent-cyan" />
-                    <p className="break-all text-sm text-slate-300">{invitation.email}</p>
+                    <p className="break-all text-sm text-slate-600">{invitation.email}</p>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold uppercase tracking-widest text-accent-purple">
+                  <div className="rounded-xl border border-accent-purple/15 bg-accent-purple/[0.06] px-3 py-2 text-xs font-bold uppercase tracking-widest text-accent-purple">
                     {statusCopy[invitation.status]}
                   </div>
                 </div>
@@ -359,7 +359,7 @@ export default function StaffRegistrationPage() {
             {invitation?.adminNotes && <Alert variant="warning">Admin notes: {invitation.adminNotes}</Alert>}
           </aside>
 
-          <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.06] to-accent-cyan/[0.04] p-6 shadow-2xl">
+          <section className="glass-panel rounded-2xl p-6">
             {status && (
               <Alert variant={statusVariant} className="mb-6">
                 {status}
@@ -581,7 +581,7 @@ export default function StaffRegistrationPage() {
                   </label>
                 </section>
 
-                <div className="flex flex-col gap-3 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-3 border-t border-accent-purple/15 pt-6 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-slate-500">Admin will review your details and documents before portal access is enabled.</p>
                   <Button type="submit" variant="primary" disabled={isSubmitting} className={cn("gap-2", isSubmitting && "opacity-80")}>
                     <Send className="h-4 w-4" />

@@ -3,6 +3,8 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "../../prisma.service";
 import { AssignClassCourseDto, CreateClassDto, CreateSectionDto, UpdateClassCourseDto, UpdateClassDto, UpdateSectionDto } from "./class.dto";
 
+const STARTER_ASSIGNMENT_COUNT = 2;
+
 type ClassRow = {
   id: string; name: string; code: string; academicYear: string; description: string | null;
   isActive: boolean; createdAt: Date; updatedAt: Date;
@@ -15,6 +17,7 @@ type CourseAssignmentRow = {
   id: string; sectionId: string; courseId: string; teacherId: string; isActive: boolean;
   createdAt: Date; updatedAt: Date; courseTitle: string; courseCode: string | null;
   teacherName: string; teacherEmail: string;
+  className?: string; classCode?: string; sectionName?: string;
 };
 
 @Injectable()
@@ -182,6 +185,91 @@ export class ClassService {
     `;
     if (!rows[0]) throw new NotFoundException("Class course assignment not found");
     return rows[0];
+  }
+
+  async getTeacherAssignments(teacherId: string) {
+    const teachers = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "User" WHERE "id" = ${teacherId} AND "role" = 'TEACHER'::"UserRole" AND "isActive" = true LIMIT 1
+    `;
+    if (!teachers[0]) throw new NotFoundException("Active teacher not found");
+    return this.listAssignmentsForTeacher(teacherId);
+  }
+
+  private listAssignmentsForTeacher(teacherId: string) {
+    return this.prisma.$queryRaw<CourseAssignmentRow[]>`
+      SELECT assignment.*, course."title" AS "courseTitle", course."code" AS "courseCode",
+        teacher."name" AS "teacherName", teacher."email" AS "teacherEmail",
+        class."name" AS "className", class."code" AS "classCode", section."name" AS "sectionName"
+      FROM "SectionCourseAssignment" assignment
+      JOIN "Course" course ON course."id" = assignment."courseId"
+      JOIN "User" teacher ON teacher."id" = assignment."teacherId"
+      JOIN "ClassSection" section ON section."id" = assignment."sectionId"
+      JOIN "AcademicClass" class ON class."id" = section."classId"
+      WHERE assignment."teacherId" = ${teacherId} AND assignment."isActive" = true
+      ORDER BY class."name" ASC, section."name" ASC, course."title" ASC
+    `;
+  }
+
+  async ensureStarterAssignments(teacherId: string) {
+    const teachers = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT "id" FROM "User" WHERE "id" = ${teacherId} AND "role" = 'TEACHER'::"UserRole" AND "isActive" = true LIMIT 1
+    `;
+    if (!teachers[0]) throw new NotFoundException("Active teacher not found");
+
+    const existing = await this.listAssignmentsForTeacher(teacherId);
+    if (existing.length >= STARTER_ASSIGNMENT_COUNT) {
+      return { assignments: existing, created: 0, alreadyAssigned: true };
+    }
+
+    const need = STARTER_ASSIGNMENT_COUNT - existing.length;
+    const usedCourseIds = new Set(existing.map((assignment) => assignment.courseId));
+
+    const sections = await this.prisma.$queryRaw<
+      { id: string; classId: string; name: string; className: string }[]
+    >`
+      SELECT section."id", section."classId", section."name",
+        class."name" AS "className"
+      FROM "ClassSection" section
+      JOIN "AcademicClass" class ON class."id" = section."classId"
+      WHERE section."isActive" = true AND class."isActive" = true
+      ORDER BY class."name" ASC, section."name" ASC
+    `;
+
+    const courses = await this.prisma.$queryRaw<{ id: string; title: string }[]>`
+      SELECT "id", "title" FROM "Course" WHERE "isPublished" = true ORDER BY "sortOrder" ASC, "title" ASC
+    `;
+
+    const created = [];
+    for (const section of sections) {
+      if (created.length >= need) break;
+      const course = courses.find(
+        (item) =>
+          !usedCourseIds.has(item.id) &&
+          !existing.some(
+            (assignment) => assignment.sectionId === section.id && assignment.courseId === item.id,
+          ),
+      );
+      if (!course) continue;
+
+      const id = randomUUID();
+      try {
+        await this.prisma.$executeRaw`
+          INSERT INTO "SectionCourseAssignment" ("id", "sectionId", "courseId", "teacherId", "isActive", "updatedAt")
+          VALUES (${id}, ${section.id}, ${course.id}, ${teacherId}, true, NOW())
+        `;
+        usedCourseIds.add(course.id);
+        created.push({ section, course });
+      } catch (error: any) {
+        if (error?.meta?.code === "23505") continue;
+        throw error;
+      }
+    }
+
+    return {
+      assignments: await this.listAssignmentsForTeacher(teacherId),
+      created: created.length,
+      alreadyAssigned: existing.length > 0,
+    };
   }
 
   private async validateCourseAndTeacher(courseId: string, teacherId: string) {

@@ -9,6 +9,14 @@ export type LectureSegment = {
 
 const DEFAULT_DIFFICULTIES: SegmentDifficulty[] = ["easy", "medium", "hard"];
 
+const SEGMENT_LABEL_PATTERN = /\[Segment\s+\d+(?:\s+@\s+\d{1,2}:\d{2}(?::\d{2})?)?\]/gi;
+
+function parseClockTimestamp(value: string): number {
+  const parts = value.split(":").map((part) => Number(part) || 0);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return parts[0] * 60 + parts[1];
+}
+
 function splitEvenly(text: string, count: number): string[] {
   const sentences = text
     .split(/[.!?\n]+/)
@@ -41,13 +49,25 @@ export function splitTranscriptIntoSegments(
   segmentCount = 3,
 ): LectureSegment[] {
   const cleaned = transcript.trim();
-  const labeledBlocks = cleaned.match(/\[Segment\s+\d+\][\s\S]*?(?=(?:\[Segment\s+\d+\])|$)/gi);
+  const labeledBlocks = cleaned.match(
+    new RegExp(
+      `${SEGMENT_LABEL_PATTERN.source}[\\s\\S]*?(?=(?:${SEGMENT_LABEL_PATTERN.source})|$)`,
+      "gi",
+    ),
+  );
 
   let texts: string[] = [];
+  let explicitTimestamps: number[] = [];
   if (labeledBlocks && labeledBlocks.length > 0) {
     texts = labeledBlocks
-      .map((block) => block.replace(/^\[Segment\s+\d+\]\s*/i, "").trim())
+      .map((block) =>
+        block.replace(/^\[Segment\s+\d+(?:\s+@\s+\d{1,2}:\d{2}(?::\d{2})?)?\]\s*/i, "").trim(),
+      )
       .filter(Boolean);
+    explicitTimestamps = labeledBlocks.map((block) => {
+      const match = block.match(/@\s+(\d{1,2}:\d{2}(?::\d{2})?)/);
+      return match ? parseClockTimestamp(match[1]) : 0;
+    });
   } else {
     const paragraphs = cleaned
       .split(/\n\s*\n+/)
@@ -66,10 +86,12 @@ export function splitTranscriptIntoSegments(
   return texts.slice(0, count).map((text, index) => ({
     label: `Segment ${index + 1}`,
     text,
-    timestamp: Math.max(
-      15,
-      Math.round(((index + 1) / (count + 1)) * safeDuration),
-    ),
+    timestamp: explicitTimestamps[index]
+      ? Math.max(5, explicitTimestamps[index])
+      : Math.max(
+          15,
+          Math.round(((index + 1) / (count + 1)) * safeDuration),
+        ),
     difficulty: DEFAULT_DIFFICULTIES[index % DEFAULT_DIFFICULTIES.length],
   }));
 }

@@ -16,7 +16,7 @@ export function Panel({
         "rounded-[28px] p-8 text-white",
         glass
           ? "surface-panel"
-          : "border border-white/10 bg-ink-900/80 shadow-soft backdrop-blur-xl",
+          : "border border-accent-purple/15 bg-ink-900/80 shadow-soft backdrop-blur-xl",
         className,
       )}
     >

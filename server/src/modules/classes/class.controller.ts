@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from "@nestjs/common";
+import { Request } from "express";
 import { ClassService } from "./class.service";
 import { AssignClassCourseDto, CreateClassDto, CreateSectionDto, UpdateClassCourseDto, UpdateClassDto, UpdateSectionDto } from "./class.dto";
 
@@ -16,4 +17,21 @@ export class ClassController {
   @Post("sections/:sectionId/courses") assignCourse(@Param("sectionId") sectionId: string, @Body() body: AssignClassCourseDto) { return this.classService.assignCourse(sectionId, body); }
   @Patch("courses/:id") updateCourseAssignment(@Param("id") id: string, @Body() body: UpdateClassCourseDto) { return this.classService.updateCourseAssignment(id, body); }
   @Delete("courses/:id") removeCourseAssignment(@Param("id") id: string) { return this.classService.removeCourseAssignment(id); }
+}
+
+@Controller("teacher/me")
+export class TeacherMeController {
+  constructor(private readonly classService: ClassService) {}
+
+  @Get("assignments")
+  getMyAssignments(@Req() request: Request) {
+    const userId = (request as Request & { user?: { userId?: string } }).user?.userId;
+    return this.classService.getTeacherAssignments(userId ?? "");
+  }
+
+  @Post("ensure-starter-assignments")
+  ensureStarterAssignments(@Req() request: Request) {
+    const userId = (request as Request & { user?: { userId?: string } }).user?.userId;
+    return this.classService.ensureStarterAssignments(userId ?? "");
+  }
 }

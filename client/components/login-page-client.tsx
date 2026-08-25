@@ -6,13 +6,14 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel } from "@/components/ui/panel";
-import {
-  getDashboardPath,
+import { getDashboardPath,
   savePortalSession,
   saveAccessToken,
   saveRefreshToken,
   type PortalRole,
 } from "@/lib/session";
+import { useMaintenance } from "@/lib/use-maintenance";
+import MaintenanceScreen from "@/components/maintenance-screen";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4010";
@@ -26,6 +27,7 @@ const roleLabels: Record<PortalRole, string> = {
 
 export function LoginPageClient() {
   const router = useRouter();
+  const { enabled: maintenanceEnabled, message: maintenanceMessage, loading: maintenanceLoading } = useMaintenance();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -102,17 +104,22 @@ export function LoginPageClient() {
     }
   }
 
+  if (maintenanceLoading) return null;
+  if (maintenanceEnabled) {
+    return <MaintenanceScreen message={maintenanceMessage} />;
+  }
+
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
+    <div className="grid min-h-screen page-canvas lg:grid-cols-2">
       <section className="motion-rise flex items-center justify-center px-6 py-12">
         <div className="max-w-xl">
-          <p className="text-xs uppercase tracking-[0.35em] text-sky-200/80">
+          <p className="text-xs uppercase tracking-[0.35em] text-slate-500">
             Smart Academy Portal
           </p>
-          <h1 className="mt-4 text-5xl font-semibold leading-tight text-white">
+          <h1 className="mt-4 text-5xl font-semibold leading-tight text-slate-900">
             Welcome back to your learning space.
           </h1>
-          <p className="mt-4 text-lg leading-8 text-slate-300">
+          <p className="mt-4 text-lg leading-8 text-slate-600">
             Continue your courses, track your progress, and stay connected with
             teachers and guardians in one simple portal.
           </p>
@@ -120,7 +127,7 @@ export function LoginPageClient() {
             <PremiumCard
               title="Guided progress"
               description="Checkpoint-based flow that helps you stay on track."
-              accent="from-accent-purple/20 to-transparent"
+              accent="from-accent-purple/15 to-transparent"
             />
             <PremiumCard
               title="Trusted access"
@@ -165,8 +172,8 @@ export function LoginPageClient() {
               {status}
             </Alert>
           ) : null}
-          <div className="mt-6 flex items-center justify-center text-sm text-slate-400">
-            <a href="/signup" className="transition hover:text-white">
+          <div className="mt-6 flex items-center justify-center text-sm text-slate-500">
+            <a href="/signup" className="transition hover:text-slate-900">
               Don't have an account? Create one
             </a>
           </div>

@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, FileQuestion, Maximize, Minimize, Pause, Play, RotateCcw, X } from "lucide-react";
+import { Check, FileQuestion, Maximize, Minimize, Pause, Play, RotateCcw, Settings2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { GazeMonitor } from "@/components/student/gaze-monitor";
 
 export type LectureQuiz = {
   id: string;
@@ -20,6 +21,12 @@ type LecturePlayerProps = {
   title: string;
   videoUrl: string;
   apiBaseUrl: string;
+  thumbnailUrl?: string | null;
+  sourceType?: string | null;
+  hlsMasterUrl?: string | null;
+  processingStatus?: string | null;
+  processingProgress?: number | null;
+  processingError?: string | null;
   quizzes: LectureQuiz[];
   answeredQuizIds: Set<string>;
   onQuizAnswered: (quizId: string) => void;
@@ -27,6 +34,8 @@ type LecturePlayerProps = {
     quiz: LectureQuiz,
     answer: string,
   ) => Promise<{ passed: boolean; correctAnswer: string; explanation: string } | null>;
+  isActive?: boolean;
+  onWatchProgress?: (percent: number) => void;
 };
 
 function getYouTubeId(url: string) {
@@ -74,11 +83,22 @@ function loadYouTubeApi(): Promise<void> {
   if (window.YT?.Player) return Promise.resolve();
 
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(pollId);
+      resolve();
+    };
     const previous = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
       previous?.();
-      resolve();
+      finish();
     };
+
+    const pollId = window.setInterval(() => {
+      if (window.YT?.Player) finish();
+    }, 50);
 
     if (!document.getElementById("youtube-iframe-api")) {
       const script = document.createElement("script");
@@ -93,14 +113,25 @@ export function LecturePlayer({
   title,
   videoUrl,
   apiBaseUrl,
+  thumbnailUrl,
+  sourceType,
+  hlsMasterUrl,
+  processingStatus,
+  processingProgress,
+  processingError,
   quizzes,
   answeredQuizIds,
   onQuizAnswered,
   onSubmitAnswer,
+  isActive = true,
+  onWatchProgress,
 }: LecturePlayerProps) {
   const reactId = useId().replace(/:/g, "");
   const youtubeId = getYouTubeId(videoUrl);
   const isYouTube = Boolean(youtubeId);
+  const isUploaded =
+    !isYouTube && (sourceType === "UPLOAD" || videoUrl.startsWith("/uploads/"));
+  const hlsReady = Boolean(hlsMasterUrl) && processingStatus === "READY";
   const playerContainerId = `yt-player-${reactId}`;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -111,6 +142,9 @@ export function LecturePlayer({
   const quizzesRef = useRef(quizzes);
   const answeredRef = useRef(answeredQuizIds);
   const currentQuizRef = useRef<LectureQuiz | null>(null);
+  const sessionActiveRef = useRef(false);
+  const onWatchProgressRef = useRef(onWatchProgress);
+  onWatchProgressRef.current = onWatchProgress;
 
   const [playerReady, setPlayerReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -118,7 +152,18 @@ export function LecturePlayer({
   const [duration, setDuration] = useState(0);
   const [seekWarning, setSeekWarning] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [buffering, setBuffering] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [qualityLevels, setQualityLevels] = useState<{ index: number; label: string }[]>([]);
+  const [activeLevelIndex, setActiveLevelIndex] = useState(-1);
+  const [autoQuality, setAutoQuality] = useState(true);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const hlsRef = useRef<any>(null);
+  const nativeHlsRef = useRef(false);
   const [currentQuiz, setCurrentQuiz] = useState<LectureQuiz | null>(null);
+  const [sessionQuizzes, setSessionQuizzes] = useState<LectureQuiz[]>([]);
+  const [sessionIndex, setSessionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [quizResult, setQuizResult] = useState<{
     passed: boolean;
@@ -206,18 +251,31 @@ export function LecturePlayer({
 
   const checkQuizTriggers = useCallback(
     (currentTime: number) => {
-      quizzesRef.current.forEach((quiz) => {
-        if (
-          quiz.timestamp !== undefined &&
-          quiz.timestamp <= currentTime &&
-          quiz.timestamp > lastCheckTimeRef.current &&
-          !answeredRef.current.has(quiz.id) &&
-          !currentQuizRef.current
-        ) {
-          pausePlayback();
-          setCurrentQuiz(quiz);
-        }
-      });
+      const pending = quizzesRef.current
+        .filter(
+          (quiz) =>
+            quiz.timestamp !== undefined &&
+            quiz.timestamp <= currentTime &&
+            quiz.timestamp > lastCheckTimeRef.current &&
+            !answeredRef.current.has(quiz.id),
+        )
+        .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+      if (pending.length > 0 && !sessionActiveRef.current) {
+        const difficulty = pending[0].difficulty;
+        const group = quizzesRef.current
+          .filter(
+            (quiz) =>
+              quiz.difficulty === difficulty &&
+              !answeredRef.current.has(quiz.id),
+          )
+          .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        sessionActiveRef.current = true;
+        pausePlayback();
+        setSessionQuizzes(group);
+        setSessionIndex(0);
+        setCurrentQuiz(group[0] ?? null);
+      }
       lastCheckTimeRef.current = currentTime;
     },
     [pausePlayback],
@@ -227,15 +285,23 @@ export function LecturePlayer({
     const currentTime = enforceProgressLock(getCurrentTime());
     checkQuizTriggers(currentTime);
 
+    let total = 0;
     if (isYouTube && playerRef.current?.getDuration) {
-      const total = playerRef.current.getDuration();
+      total = playerRef.current.getDuration();
       if (total && Number.isFinite(total)) {
         setDuration(total);
       }
       const state = playerRef.current.getPlayerState?.();
       setIsPlaying(state === window.YT?.PlayerState.PLAYING);
     } else if (videoRef.current?.duration && Number.isFinite(videoRef.current.duration)) {
-      setDuration(videoRef.current.duration);
+      total = videoRef.current.duration;
+      setDuration(total);
+    }
+
+    if (total > 0 && maxWatchedRef.current > 0) {
+      onWatchProgressRef.current?.(
+        Math.min(100, (maxWatchedRef.current / total) * 100),
+      );
     }
   }, [checkQuizTriggers, enforceProgressLock, getCurrentTime, isYouTube]);
 
@@ -257,14 +323,32 @@ export function LecturePlayer({
   useEffect(() => {
     maxWatchedRef.current = 0;
     lastCheckTimeRef.current = 0;
+    sessionActiveRef.current = false;
     setCurrentQuiz(null);
+    setSessionQuizzes([]);
+    setSessionIndex(0);
     setSelectedAnswer(null);
     setQuizResult(null);
     setDisplayTime(0);
     setDuration(0);
     setPlayerReady(false);
     setIsFullscreen(false);
+    setBuffering(false);
+    setPlaybackError(null);
+    setPlaybackRate(1);
+    setQualityLevels([]);
+    setActiveLevelIndex(-1);
+    setAutoQuality(true);
+    setQualityOpen(false);
   }, [videoUrl]);
+
+  // When the player is hidden (e.g. the student switched tabs), pause at the
+  // current position. Returning to the tab leaves it paused where it was.
+  useEffect(() => {
+    if (!isActive) {
+      pausePlayback();
+    }
+  }, [isActive, pausePlayback]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -309,7 +393,11 @@ export function LecturePlayer({
             setPlayerReady(true);
             setDuration(event.target.getDuration() || 0);
             event.target.playVideo();
-            setIsPlaying(true);
+          },
+          onError: () => {
+            if (destroyed) return;
+            setIsPlaying(false);
+            setPlaybackError("This YouTube video is unavailable. Choose another lecture.");
           },
           onStateChange: (event: { data: number }) => {
             if (destroyed) return;
@@ -330,14 +418,114 @@ export function LecturePlayer({
     return () => {
       destroyed = true;
       if (intervalId) window.clearInterval(intervalId);
-      try {
-        playerRef.current?.destroy?.();
-      } catch {
-        // player may already be gone
-      }
       playerRef.current = null;
+      const container = document.getElementById(playerContainerId);
+      if (container) {
+        // YouTube owns the iframe DOM. Clear it before React reuses the container.
+        container.replaceChildren();
+      }
     };
   }, [isYouTube, youtubeId, playerContainerId, tickPlayback]);
+
+  const resolveUrl = useCallback(
+    (url: string) => (url.startsWith("http") ? url : `${apiBaseUrl}${url}`),
+    [apiBaseUrl],
+  );
+
+  // HLS adaptive playback for uploaded videos (hls.js where needed,
+  // native HLS where supported). YouTube keeps its own player path.
+  useEffect(() => {
+    if (!hlsReady || !hlsMasterUrl) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    let hls: any = null;
+    let destroyed = false;
+    const masterUrl = resolveUrl(hlsMasterUrl);
+
+    const setup = async () => {
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = masterUrl;
+        nativeHlsRef.current = true;
+        return;
+      }
+
+      try {
+        const Hls = (await import("hls.js")).default;
+        if (destroyed) return;
+        if (!Hls.isSupported()) {
+          setPlaybackError("Your browser does not support adaptive video playback.");
+          return;
+        }
+
+        hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+        hlsRef.current = hls;
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (destroyed) return;
+          const seen = new Map<number, number>();
+          hls?.levels.forEach((level: any, index: number) => {
+            if (level?.height && !seen.has(level.height)) {
+              seen.set(level.height, index);
+            }
+          });
+          setQualityLevels(
+            [...seen.entries()]
+              .sort((a, b) => b[0] - a[0])
+              .map(([height, index]) => ({ index, label: `${height}p` })),
+          );
+          setActiveLevelIndex(-1);
+          setAutoQuality(true);
+        });
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_event: any, data: any) => {
+          if (destroyed) return;
+          if (typeof data?.level === "number") {
+            setActiveLevelIndex(data.level);
+          }
+        });
+        hls.on(Hls.Events.ERROR, (_event: any, data: any) => {
+          if (!data.fatal) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls?.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls?.recoverMediaError();
+          } else {
+            setPlaybackError("Video playback failed. Refresh the page to try again.");
+          }
+        });
+        hls.loadSource(masterUrl);
+        hls.attachMedia(video);
+      } catch {
+        if (!destroyed) {
+          setPlaybackError("Could not load the adaptive video player.");
+        }
+      }
+    };
+
+    void setup();
+
+    return () => {
+      destroyed = true;
+      hlsRef.current = null;
+      nativeHlsRef.current = false;
+      hls?.destroy();
+      hls = null;
+    };
+  }, [hlsReady, hlsMasterUrl, resolveUrl]);
+
+  const selectQuality = useCallback((index: number) => {
+    const hls = hlsRef.current;
+    if (!hls) return;
+    hls.currentLevel = index;
+    setAutoQuality(index === -1);
+    setActiveLevelIndex(index);
+    setQualityOpen(false);
+  }, []);
+
+  const activeQualityLabel =
+    autoQuality || activeLevelIndex === -1
+      ? "Auto"
+      : qualityLevels.find((level) => level.index === activeLevelIndex)?.label ?? "Auto";
 
   const handleSubmitAnswer = async () => {
     if (!currentQuiz || !selectedAnswer) return;
@@ -348,10 +536,22 @@ export function LecturePlayer({
     }
   };
 
+  const handleNextQuestion = () => {
+    const next = sessionIndex + 1;
+    setQuizResult(null);
+    setSelectedAnswer(null);
+    setSessionIndex(next);
+    setCurrentQuiz(sessionQuizzes[next] ?? null);
+  };
+
   const handleContinueWatching = () => {
     setCurrentQuiz(null);
     setSelectedAnswer(null);
     setQuizResult(null);
+    setSessionQuizzes([]);
+    setSessionIndex(0);
+    sessionActiveRef.current = false;
+    lastCheckTimeRef.current = -1;
     resumePlayback();
   };
 
@@ -394,9 +594,8 @@ export function LecturePlayer({
     }
   };
 
-  const resolvedVideoUrl = videoUrl.startsWith("http")
-    ? videoUrl
-    : `${apiBaseUrl}${videoUrl}`;
+  const resolvedVideoUrl = resolveUrl(videoUrl);
+  const resolvedPoster = thumbnailUrl ? resolveUrl(thumbnailUrl) : undefined;
 
   return (
     <div className="relative">
@@ -406,24 +605,51 @@ export function LecturePlayer({
         </div>
       ) : null}
 
+      {isUploaded && processingStatus && processingStatus !== "READY" ? (
+        <div
+          className={cn(
+            "absolute left-4 right-4 top-4 z-40 rounded-xl border px-4 py-2 text-center text-xs font-semibold",
+            processingStatus === "FAILED"
+              ? "border-rose-400/30 bg-rose-500/15 text-rose-100"
+              : "border-accent-cyan/30 bg-accent-cyan/15 text-cyan-100",
+          )}
+          title={processingError ?? undefined}
+        >
+          {processingStatus === "FAILED"
+            ? "Video processing failed — playing the original file."
+            : `Processing video for adaptive playback… ${processingProgress ?? 0}%`}
+        </div>
+      ) : null}
+
+      {playbackError ? (
+        <div className="absolute left-4 right-4 top-4 z-40 rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2 text-center text-xs font-semibold text-rose-100">
+          {playbackError}
+        </div>
+      ) : null}
+
       {currentQuiz ? (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-ink-950/95 p-4">
-          <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-ink-900 p-6 shadow-2xl">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/85 p-4">
+          <div className="w-full max-w-2xl rounded-3xl border border-accent-purple/15 bg-ink-900 p-6 shadow-2xl">
             <div className="mb-6 flex items-center gap-2">
               <span
                 className={cn(
                   "rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest",
                   currentQuiz.difficulty === "easy"
-                    ? "bg-emerald-500/10 text-emerald-300"
+                    ? "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm"
                     : currentQuiz.difficulty === "medium"
-                      ? "bg-amber-500/10 text-amber-300"
-                      : "bg-rose-500/10 text-rose-300",
+                      ? "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm"
+                      : "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm",
                 )}
               >
                 {currentQuiz.difficulty}
               </span>
+              {sessionQuizzes.length > 1 ? (
+                <span className="rounded-full bg-accent-purple/[0.06] px-3 py-1 text-xs font-bold uppercase tracking-widest text-slate-600">
+                  Question {sessionIndex + 1} of {sessionQuizzes.length}
+                </span>
+              ) : null}
               {currentQuiz.segment ? (
-                <span className="rounded-full bg-white/5 px-3 py-1 text-xs font-bold uppercase tracking-widest text-slate-300">
+                <span className="rounded-full bg-accent-purple/[0.06] px-3 py-1 text-xs font-bold uppercase tracking-widest text-slate-600">
                   {currentQuiz.segment}
                 </span>
               ) : null}
@@ -446,7 +672,7 @@ export function LecturePlayer({
                         "w-full rounded-2xl border p-4 text-left transition-all",
                         selectedAnswer === option
                           ? "border-accent-purple bg-accent-purple/10 text-white"
-                          : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10",
+                          : "border-accent-purple/15 bg-accent-purple/[0.06] text-slate-600 hover:bg-accent-purple/[0.12]",
                       )}
                     >
                       {option}
@@ -474,15 +700,15 @@ export function LecturePlayer({
                   )}
                 >
                   {quizResult.passed ? (
-                    <Check className="h-8 w-8 text-emerald-400" />
+                    <Check className="h-8 w-8 text-emerald-600" />
                   ) : (
-                    <X className="h-8 w-8 text-rose-400" />
+                    <X className="h-8 w-8 text-rose-600" />
                   )}
                   <div>
                     <h4
                       className={cn(
                         "text-lg font-bold",
-                        quizResult.passed ? "text-emerald-300" : "text-rose-300",
+                        quizResult.passed ? "text-emerald-600" : "text-rose-600",
                       )}
                     >
                       {quizResult.passed ? "Correct!" : "Not quite right"}
@@ -492,9 +718,19 @@ export function LecturePlayer({
                     </p>
                   </div>
                 </div>
-                <p className="mb-6 text-slate-300">{quizResult.explanation}</p>
-                <Button onClick={handleContinueWatching} fullWidth size="lg">
-                  Continue Watching
+                <p className="mb-6 text-slate-600">{quizResult.explanation}</p>
+                <Button
+                  onClick={
+                    sessionIndex < sessionQuizzes.length - 1
+                      ? handleNextQuestion
+                      : handleContinueWatching
+                  }
+                  fullWidth
+                  size="lg"
+                >
+                  {sessionIndex < sessionQuizzes.length - 1
+                    ? "Next Question"
+                    : "Continue Watching"}
                 </Button>
               </>
             )}
@@ -516,33 +752,57 @@ export function LecturePlayer({
             <div className="absolute inset-0 z-10" aria-hidden="true" />
           </>
         ) : (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            className="h-full w-full"
-            crossOrigin="anonymous"
-            onTimeUpdate={handleTimeUpdate}
-            onSeeking={handleSeeking}
-            onLoadedMetadata={() => {
-              if (videoRef.current?.duration) {
-                setDuration(videoRef.current.duration);
-              }
-            }}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-          >
-            <source src={resolvedVideoUrl} type="video/mp4" />
-            Your browser does not support the video tag.
-          </video>
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              poster={resolvedPoster}
+              className="h-full w-full"
+              crossOrigin="anonymous"
+              onTimeUpdate={handleTimeUpdate}
+              onSeeking={handleSeeking}
+              onLoadedMetadata={() => {
+                if (videoRef.current?.duration) {
+                  setDuration(videoRef.current.duration);
+                }
+              }}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              onWaiting={() => setBuffering(true)}
+              onCanPlay={() => setBuffering(false)}
+              onPlaying={() => setBuffering(false)}
+              onError={() => {
+                if (!hlsReady) {
+                  setPlaybackError("Video playback failed. Try again later.");
+                }
+              }}
+            >
+              {!hlsReady ? (
+                <source src={resolvedVideoUrl} type="video/mp4" />
+              ) : null}
+              Your browser does not support the video tag.
+            </video>
+            {buffering ? (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+              </div>
+            ) : null}
+          </>
         )}
+
+        <GazeMonitor
+          active={isActive}
+          onPauseRequest={pausePlayback}
+          onResumeRequest={resumePlayback}
+        />
 
         <div className="absolute bottom-0 left-0 right-0 z-20 flex items-center gap-2 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-4 pb-4 pt-10 sm:gap-3">
           <button
             type="button"
             onClick={() => seekBackward(5)}
             disabled={isYouTube && !playerReady}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ffffff]/15 text-[#fff] hover:bg-[#ffffff]/30 disabled:opacity-40"
             aria-label="Rewind 5 seconds"
             title="Rewind 5 seconds"
           >
@@ -552,20 +812,20 @@ export function LecturePlayer({
             type="button"
             onClick={togglePlay}
             disabled={isYouTube && !playerReady}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ffffff]/15 text-[#fff] hover:bg-[#ffffff]/30 disabled:opacity-40"
             aria-label={isPlaying ? "Pause lecture" : "Play lecture"}
           >
             {isPlaying ? <Pause size={18} /> : <Play size={18} />}
           </button>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <div className="flex items-center justify-between gap-2 text-xs text-slate-300">
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-200">
               <span className="truncate">
                 {formatTime(displayTime)}
                 {duration > 0 ? ` / ${formatTime(duration)}` : ""}
               </span>
-              <span className="shrink-0 text-amber-300">Forward locked</span>
+              <span className="shrink-0 text-amber-400">Forward locked</span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-1.5 overflow-hidden rounded-full bg-[#ffffff]/20">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
                 style={{
@@ -577,10 +837,76 @@ export function LecturePlayer({
               />
             </div>
           </div>
+          {!isYouTube ? (
+            <button
+              type="button"
+              onClick={() => {
+                const speeds = [1, 1.25, 1.5, 2];
+                const next =
+                  speeds[(speeds.indexOf(playbackRate) + 1) % speeds.length];
+                setPlaybackRate(next);
+                if (videoRef.current) videoRef.current.playbackRate = next;
+              }}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ffffff]/15 text-xs font-bold text-[#fff] hover:bg-[#ffffff]/30"
+              aria-label="Playback speed"
+              title={`Playback speed: ${playbackRate}x`}
+            >
+              {playbackRate}x
+            </button>
+          ) : null}
+          {!isYouTube && hlsReady && qualityLevels.length > 0 ? (
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setQualityOpen((open) => !open)}
+                className="flex h-10 items-center gap-1.5 rounded-full bg-[#ffffff]/15 px-3 text-xs font-bold text-[#fff] hover:bg-[#ffffff]/30"
+                aria-label="Video quality"
+                title={`Video quality: ${activeQualityLabel}`}
+              >
+                <Settings2 size={16} />
+                {activeQualityLabel}
+              </button>
+              {qualityOpen ? (
+                <div className="absolute bottom-full right-0 z-30 mb-2 w-36 overflow-hidden rounded-xl border border-accent-purple/15 bg-ink-900 p-1.5 shadow-soft">
+                  <button
+                    type="button"
+                    onClick={() => selectQuality(-1)}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+                      autoQuality
+                        ? "bg-accent-purple/10 text-accent-purple"
+                        : "text-slate-600 hover:bg-accent-purple/[0.06]",
+                    )}
+                  >
+                    Auto
+                    {autoQuality ? <Check size={14} /> : null}
+                  </button>
+                  {qualityLevels.map((level) => (
+                    <button
+                      key={level.index}
+                      type="button"
+                      onClick={() => selectQuality(level.index)}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
+                        !autoQuality && activeLevelIndex === level.index
+                          ? "bg-accent-purple/10 text-accent-purple"
+                          : "text-slate-600 hover:bg-accent-purple/[0.06]",
+                      )}
+                    >
+                      {level.label}
+                      {!autoQuality && activeLevelIndex === level.index ? (
+                        <Check size={14} />
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ffffff]/15 text-[#fff] hover:bg-[#ffffff]/30"
             aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
             title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
           >
@@ -590,28 +916,51 @@ export function LecturePlayer({
       </div>
 
       {sortedQuizzes.length > 0 ? (
-        <div className="border-t border-white/5 p-4">
+        <div className="border-t border-accent-purple/10 p-4">
           <h5 className="mb-3 text-sm font-bold text-white">Quiz Checkpoints</h5>
           <div className="flex flex-wrap gap-2">
-            {sortedQuizzes.map((quiz) => (
-              <div
-                key={quiz.id}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs",
-                  answeredQuizIds.has(quiz.id)
-                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
-                    : "border-white/10 bg-white/5 text-slate-400",
-                )}
-              >
-                <FileQuestion size={12} />
-                {quiz.segment || formatTime(quiz.timestamp || 0)}
-                <span className="uppercase">{quiz.difficulty}</span>
-                {answeredQuizIds.has(quiz.id) ? <Check size={12} /> : null}
-              </div>
-            ))}
+            {Array.from(
+              new Map(
+                sortedQuizzes.map((quiz) => [
+                  `${quiz.segment ?? "checkpoint"}|${quiz.timestamp ?? 0}`,
+                  quiz,
+                ]),
+              ).values(),
+            ).map((quiz) => {
+              const segmentQuizzes = sortedQuizzes.filter(
+                (item) =>
+                  (item.segment ?? "checkpoint") === (quiz.segment ?? "checkpoint") &&
+                  (item.timestamp ?? 0) === (quiz.timestamp ?? 0),
+              );
+              const answered = segmentQuizzes.filter((item) =>
+                answeredQuizIds.has(item.id),
+              ).length;
+              return (
+                <div
+                  key={`${quiz.segment ?? "checkpoint"}|${quiz.timestamp ?? 0}`}
+                  className={cn(
+                    "flex items-center gap-2 rounded-xl border px-3 py-2 text-xs",
+                    answered === segmentQuizzes.length
+                      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm"
+                      : "border-accent-purple/15 bg-accent-purple/[0.06] text-slate-400",
+                  )}
+                >
+                  <FileQuestion size={12} />
+                  {quiz.segment || formatTime(quiz.timestamp || 0)}
+                  <span className="text-accent-purple">
+                    {formatTime(quiz.timestamp || 0)}
+                  </span>
+                  <span className="uppercase">
+                    {segmentQuizzes.length} question{segmentQuizzes.length > 1 ? "s" : ""}
+                  </span>
+                  {answered === segmentQuizzes.length ? <Check size={12} /> : null}
+                </div>
+              );
+            })}
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            Forward seeking is locked. Quizzes appear automatically at each segment checkpoint.
+            Forward seeking is locked. All questions of the same difficulty are
+            asked together in one popup at the first checkpoint.
           </p>
         </div>
       ) : null}
