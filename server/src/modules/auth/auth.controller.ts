@@ -1,4 +1,5 @@
 import { Controller, Post, Body } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import {
   RegisterDto,
@@ -12,6 +13,8 @@ import {
 } from "./auth.dto";
 import { Public } from "./public.decorator";
 
+// Credential and OTP endpoints are brute-force targets, so they get a much tighter limit.
+@Throttle({ default: { ttl: 60_000, limit: 10 } })
 @Public()
 @Controller("auth")
 export class AuthController {

@@ -2,7 +2,8 @@ import { Injectable, ConflictException, NotFoundException, BadRequestException }
 import { PrismaService } from "../../prisma.service";
 import { ChangePasswordDto, CompleteStaffRegistrationDto, CreateUserDto, InviteStaffDto, ReviewStaffInvitationDto, UpdateMeDto, UpdateUserDto } from "./user.dto";
 import { createHash, randomBytes } from "crypto";
-import { EmailService } from "../auth/email.service";
+import { hashPassword, verifyPassword } from "../auth/password";
+import { EmailService, escapeHtml, frontendBaseUrl } from "../auth/email.service";
 import { GuardianService } from "../guardian/guardian.service";
 
 type StaffInvitationRecord = {
@@ -27,17 +28,12 @@ export class UserService {
     private readonly guardianService: GuardianService,
   ) {}
 
-  private hashPassword(password: string): string {
-    return createHash("sha256").update(password).digest("hex");
-  }
-
   private hashToken(token: string): string {
     return createHash("sha256").update(token).digest("hex");
   }
 
   private staffRegistrationUrl(token: string): string {
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-    return `${frontendUrl.replace(/\/$/, "")}/staff/register/${encodeURIComponent(token)}`;
+    return `${frontendBaseUrl() || "http://localhost:3000"}/staff/register/${encodeURIComponent(token)}`;
   }
 
   private async ensureStaffInvitationTable() {
@@ -95,7 +91,7 @@ export class UserService {
         email: body.email,
         name: body.name,
         role: body.role,
-        passwordHash: this.hashPassword(body.password),
+        passwordHash: await hashPassword(body.password),
         phoneNumber: body.phoneNumber,
         avatarUrl: body.avatarUrl,
         isActive: true,
@@ -150,19 +146,18 @@ export class UserService {
         )[0];
 
     const link = this.staffRegistrationUrl(token);
-    try {
-      await this.emailService.sendEmail(
-        email,
-        "Complete your SmartAcademy staff registration",
-        `<p>Hello ${body.name},</p><p>You have been invited to join SmartAcademy as a teacher.</p><p><a href="${link}">Complete your registration</a></p><p>This link expires in 7 days.</p>`,
-        `Hello ${body.name}, complete your SmartAcademy staff registration: ${link}`,
-      );
-
-      return { ...invitation, registrationLink: link, emailSent: true };
-    } catch (error) {
-      const emailError = error instanceof Error ? error.message : "Failed to send email";
-      return { ...invitation, registrationLink: link, emailSent: false, emailError };
-    }
+    const mail = await this.emailService.trySend(
+      email,
+      "Complete your SmartAcademy staff registration",
+      `<p>Hello ${escapeHtml(body.name)},</p><p>You have been invited to join SmartAcademy as a teacher.</p><p><a href="${link}">Complete your registration</a></p><p>This link expires in 7 days.</p>`,
+      `Hello ${body.name}, complete your SmartAcademy staff registration: ${link}`,
+    );
+    return {
+      ...invitation,
+      registrationLink: link,
+      emailSent: mail.sent,
+      ...(mail.sent ? {} : { emailError: mail.reason }),
+    };
   }
 
   async deletePendingStaffInvitation(id: string) {
@@ -225,7 +220,7 @@ export class UserService {
         name: invitation.name,
         role: invitation.role,
         phoneNumber: body.phoneNumber,
-        passwordHash: this.hashPassword(body.password),
+        passwordHash: await hashPassword(body.password),
         isActive: false,
         emailVerifiedAt: new Date(),
       },
@@ -234,13 +229,13 @@ export class UserService {
         name: invitation.name,
         role: invitation.role,
         phoneNumber: body.phoneNumber,
-        passwordHash: this.hashPassword(body.password),
+        passwordHash: await hashPassword(body.password),
         isActive: false,
         emailVerifiedAt: new Date(),
       },
     });
 
-    return (
+    const submitted = (
       await this.prisma.$queryRaw<StaffInvitationRecord[]>`
         UPDATE "StaffInvitation"
         SET "educationDetails" = ${body.educationDetails}, "personalDetails" = ${body.personalDetails},
@@ -251,6 +246,13 @@ export class UserService {
         RETURNING *
       `
     )[0];
+
+    const mail = await this.emailService.trySend(
+      invitation.email,
+      "SmartAcademy staff registration received",
+      `<p>Hello ${escapeHtml(invitation.name)},</p><p>We have received your staff registration. An administrator will review it and email you the decision.</p><p>You will be able to sign in once it is approved.</p>`,
+    );
+    return { ...submitted, emailSent: mail.sent };
   }
 
   async reviewStaffInvitation(id: string, body: ReviewStaffInvitationDto) {
@@ -294,32 +296,31 @@ export class UserService {
           `
         )[0];
 
+    // The decision is saved by now. The email is best effort so a bounce cannot turn it into an
+    // error the admin cannot retry; the result tells the admin whether the person was notified.
+    const name = escapeHtml(invitation.name);
+    const notes = body.adminNotes ? `<p>${escapeHtml(body.adminNotes)}</p>` : "";
+    let subject: string;
+    let html: string;
     if (body.status === "APPROVED") {
       await this.prisma.user.update({
         where: { email: invitation.email },
         data: { isActive: true },
       });
-      await this.emailService.sendEmail(
-        invitation.email,
-        "SmartAcademy staff application approved",
-        `<p>Hello ${invitation.name},</p><p>Your staff application has been approved. You can now sign in to your portal.</p>`,
-      );
+      const loginLink = `${frontendBaseUrl()}/login`;
+      subject = "SmartAcademy staff application approved";
+      html = `<p>Hello ${name},</p><p>Your staff application has been approved. You can now sign in to your portal:</p><p><a href="${loginLink}">${loginLink}</a></p>${notes}`;
     } else if (body.status === "REVISION_REQUESTED" && nextToken) {
       const link = this.staffRegistrationUrl(nextToken);
-      await this.emailService.sendEmail(
-        invitation.email,
-        "SmartAcademy staff application needs revision",
-        `<p>Hello ${invitation.name},</p><p>Your application needs revision.</p><p>${body.adminNotes || ""}</p><p><a href="${link}">Update your registration</a></p>`,
-      );
+      subject = "SmartAcademy staff application needs revision";
+      html = `<p>Hello ${name},</p><p>Your application needs revision.</p>${notes}<p><a href="${link}">Update your registration</a></p>`;
     } else {
-      await this.emailService.sendEmail(
-        invitation.email,
-        "SmartAcademy staff application rejected",
-        `<p>Hello ${invitation.name},</p><p>Your staff application was rejected.</p><p>${body.adminNotes || ""}</p>`,
-      );
+      subject = "SmartAcademy staff application rejected";
+      html = `<p>Hello ${name},</p><p>Your staff application was rejected.</p>${notes}`;
     }
+    const mail = await this.emailService.trySend(invitation.email, subject, html);
 
-    return updated;
+    return { ...updated, emailSent: mail.sent, ...(mail.sent ? {} : { emailError: mail.reason }) };
   }
 
   getUserByEmail(email: string) {
@@ -401,7 +402,7 @@ export class UserService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
 
-    if (!user.passwordHash || user.passwordHash !== this.hashPassword(body.currentPassword)) {
+    if (!(await verifyPassword(body.currentPassword, user.passwordHash)).valid) {
       throw new BadRequestException("Current password is incorrect");
     }
 
@@ -411,7 +412,7 @@ export class UserService {
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: this.hashPassword(body.newPassword) },
+      data: { passwordHash: await hashPassword(body.newPassword) },
     });
 
     return { message: "Password changed successfully" };

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -6,12 +7,14 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UploadedFile,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { diskStorage } from "multer";
-import { join } from "path";
+import { extname, join } from "path";
+import { randomBytes } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import {
   CreateCheckpointDto,
@@ -23,15 +26,23 @@ import {
   UpdateLectureDto,
   UpdateProgressDto,
 } from "./content.dto";
+import { Roles } from "../auth/roles.decorator";
+import { Throttle } from "@nestjs/throttler";
 import { ContentService } from "./content.service";
 
+const MAX_LECTURE_UPLOAD_BYTES = 500 * 1024 * 1024;
+const LECTURE_MEDIA_EXTENSIONS = new Set([".mp4", ".mov", ".webm", ".mkv", ".m4v", ".mp3", ".wav", ".m4a", ".ogg"]);
+
+// Reads are shared with students and guardians; writes are staff-only.
+@Roles("ADMIN", "TEACHER")
 @Controller("admin")
 export class ContentController {
   constructor(private readonly contentService: ContentService) {}
 
+  @Roles("ADMIN", "TEACHER", "STUDENT", "GUARDIAN")
   @Get("courses")
-  listCourses() {
-    return this.contentService.listCourses();
+  listCourses(@Req() req: { user?: { role?: string } }) {
+    return this.contentService.listCourses(req.user);
   }
 
   @Post("courses")
@@ -49,9 +60,10 @@ export class ContentController {
     return this.contentService.deleteCourse(id);
   }
 
+  @Roles("ADMIN", "TEACHER", "STUDENT", "GUARDIAN")
   @Get("lectures")
-  listLectures() {
-    return this.contentService.listLectures();
+  listLectures(@Req() req: { user?: { role?: string } }) {
+    return this.contentService.listLectures(req.user);
   }
 
   @Post("lectures")
@@ -82,6 +94,7 @@ export class ContentController {
     return this.contentService.retryLectureProcessing(id);
   }
 
+  @Roles("ADMIN", "TEACHER", "STUDENT", "GUARDIAN")
   @Get("checkpoints")
   listCheckpoints() {
     return this.contentService.listCheckpoints();
@@ -106,13 +119,15 @@ export class ContentController {
   }
 }
 
+@Roles("ADMIN", "TEACHER")
 @Controller("guardian/progress")
 export class GuardianProgressController {
   constructor(private readonly contentService: ContentService) {}
 
+  @Roles("ADMIN", "TEACHER", "STUDENT", "GUARDIAN")
   @Get()
-  listProgress() {
-    return this.contentService.listProgress();
+  listProgress(@Req() req: { user?: { userId?: string; role?: string } }) {
+    return this.contentService.listProgress(req.user);
   }
 
   @Post()
@@ -134,10 +149,12 @@ export class GuardianProgressController {
   }
 }
 
+@Roles("TEACHER", "ADMIN")
 @Controller("teacher")
 export class TeacherContentController {
   constructor(private readonly contentService: ContentService) {}
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post("transcribe")
   @UseInterceptors(
     FileInterceptor("file", {
@@ -150,15 +167,22 @@ export class TeacherContentController {
           cb(null, uploadsPath);
         },
         filename: (_req: any, file: any, cb: any) => {
-          const originalName = file.originalname || "video.mp4";
-          const extension = originalName.split(".").pop();
-          const nameWithoutExt = originalName.replace(/\.[^/.]+$/, "");
-          const sanitizedBase = nameWithoutExt
-            .replace(/[^a-z0-9]/gi, "_")
-            .replace(/_+/g, "_");
-          cb(null, `${Date.now()}-${sanitizedBase}.${extension}`);
+          // Never trust the client's filename: the extension is allow-listed by fileFilter
+          // and the base name is random, so uploads cannot overwrite or masquerade as other files.
+          const extension = extname(file.originalname || "").toLowerCase();
+          cb(null, `${Date.now()}-${randomBytes(8).toString("hex")}${extension}`);
         },
       }),
+      limits: { fileSize: MAX_LECTURE_UPLOAD_BYTES, files: 1 },
+      fileFilter: (_req: any, file: any, cb: any) => {
+        const extension = extname(file.originalname || "").toLowerCase();
+        const mimeOk = /^(video|audio)\//.test(file.mimetype || "");
+        if (!LECTURE_MEDIA_EXTENSIONS.has(extension) || !mimeOk) {
+          cb(new BadRequestException("Only video or audio files (mp4, mov, webm, mkv, mp3, wav, m4a) are allowed"), false);
+          return;
+        }
+        cb(null, true);
+      },
     }),
   )
   async transcribe(

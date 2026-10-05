@@ -2,6 +2,7 @@ import {
   IsArray,
   IsDateString,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
 } from "class-validator";
@@ -74,12 +75,7 @@ export class AddMockExamQuestionsDto {
 }
 
 export class SubmitMockExamDto {
-  @IsString()
-  studentId: string;
-
-  @IsInt()
-  score: number;
-
-  @IsInt()
-  totalQuestions: number;
+  /** Selected option per question id. The server grades these; clients never report a score. */
+  @IsObject()
+  answers: Record<string, string>;
 }

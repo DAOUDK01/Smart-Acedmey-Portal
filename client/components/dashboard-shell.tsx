@@ -12,6 +12,7 @@ import {
   FileQuestion,
   Users,
   GraduationCap,
+  Menu,
   ShieldAlert,
   X,
 } from "lucide-react";
@@ -82,6 +83,7 @@ export function DashboardShell({
   hideHeader?: boolean;
 }) {
   const router = useRouter();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -328,6 +330,15 @@ export function DashboardShell({
     [onTabChange, role, router],
   );
 
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [mobileNavOpen]);
+
   const notifCount = notifications.filter(
     (item) => item.tone !== "success",
   ).length;
@@ -341,14 +352,33 @@ export function DashboardShell({
         onItemClick={onTabChange || (() => {})}
         userName={session?.name}
         userEmail={session?.email}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
       />
+      {mobileNavOpen ? (
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-[2px] lg:hidden"
+          aria-hidden="true"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      ) : null}
 
       {/* Main Content Area */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         {/* Top Navigation / Header */}
         {!hideHeader && (
-          <header className="relative z-40 flex h-20 shrink-0 items-center justify-between border-b border-accent-purple/10 bg-[#ffffff]/70 px-8 backdrop-blur-2xl">
-            <div className="flex items-center gap-8">
+          <header className="relative z-40 flex h-20 shrink-0 items-center justify-between border-b border-accent-purple/10 bg-[#ffffff]/70 px-4 backdrop-blur-2xl sm:px-8">
+            <div className="flex items-center gap-3 sm:gap-8">
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(true)}
+                className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-accent-purple/[0.08] active:scale-95 lg:hidden"
+                aria-label="Open menu"
+                aria-controls="primary-navigation"
+                aria-expanded={mobileNavOpen}
+              >
+                <Menu size={20} />
+              </button>
               <div className="relative hidden lg:block" ref={searchRef}>
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
@@ -548,7 +578,7 @@ export function DashboardShell({
         )}
 
         {/* Scrollable Content */}
-        <main className="flex-1 overflow-y-auto page-canvas p-8">
+        <main className="flex-1 overflow-y-auto page-canvas p-4 sm:p-8">
           <div className="mx-auto max-w-6xl">
             <header className="mb-10">
               <Eyebrow className="text-slate-500">{roleLabels[role]} Dashboard</Eyebrow>

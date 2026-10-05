@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../../prisma.service";
 import { QuizStatus, MockExamStatus } from "@prisma/client";
+import { AuthenticatedUser, studentKeyFor } from "../auth/identity";
 import {
   CreateMockExamDto,
   UpdateMockExamDto,
@@ -214,7 +215,8 @@ export class MockExamService {
     return this.prisma.mockExam.delete({ where: { id } });
   }
 
-  async listStudentMockExams(studentId?: string) {
+  async listStudentMockExams(user?: AuthenticatedUser) {
+    const studentId = await studentKeyFor(this.prisma, user);
     const now = new Date();
     const exams = await this.prisma.mockExam.findMany({
       where: {
@@ -244,8 +246,12 @@ export class MockExamService {
     return serializeMockExams(examsWithApprovedOnly);
   }
 
-  async submitMockExam(id: string, body: SubmitMockExamDto) {
-    const exam = await this.prisma.mockExam.findUnique({ where: { id } });
+  async submitMockExam(id: string, body: SubmitMockExamDto, user?: AuthenticatedUser) {
+    const studentId = await studentKeyFor(this.prisma, user);
+    const exam = await this.prisma.mockExam.findUnique({
+      where: { id },
+      include: { questions: { include: { question: { select: { status: true, correctAnswer: true } } } } },
+    });
     if (!exam) {
       throw new BadRequestException("Mock exam not found");
     }
@@ -260,20 +266,26 @@ export class MockExamService {
       throw new BadRequestException("This mock exam has expired");
     }
     const existing = await this.prisma.mockExamAttempt.findFirst({
-      where: { examId: id, studentId: body.studentId },
+      where: { examId: id, studentId },
     });
     if (existing) {
       throw new BadRequestException("You have already submitted this mock exam");
     }
 
-    const passed =
-      body.totalQuestions > 0 && body.score / body.totalQuestions >= 0.6;
+    const graded = exam.questions.filter(
+      (entry) => entry.question.status === QuizStatus.APPROVED,
+    );
+    const totalQuestions = graded.length;
+    const score = graded.filter(
+      (entry) => body.answers[entry.questionId] === entry.question.correctAnswer,
+    ).length;
+    const passed = totalQuestions > 0 && score / totalQuestions >= 0.6;
     return this.prisma.mockExamAttempt.create({
       data: {
         examId: id,
-        studentId: body.studentId,
-        score: body.score,
-        totalQuestions: body.totalQuestions,
+        studentId,
+        score,
+        totalQuestions,
         passed,
       },
     });

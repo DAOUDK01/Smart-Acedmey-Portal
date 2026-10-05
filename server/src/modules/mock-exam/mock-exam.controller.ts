@@ -6,8 +6,10 @@ import {
   Param,
   Patch,
   Post,
-  Query,
+  Req,
 } from "@nestjs/common";
+import { AuthenticatedUser } from "../auth/identity";
+import { Roles } from "../auth/roles.decorator";
 import { MockExamService } from "./mock-exam.service";
 import {
   AddMockExamQuestionsDto,
@@ -16,6 +18,7 @@ import {
   UpdateMockExamDto,
 } from "./mock-exam.dto";
 
+@Roles("TEACHER", "ADMIN")
 @Controller("teacher/mock-exams")
 export class TeacherMockExamController {
   constructor(private readonly mockExamService: MockExamService) {}
@@ -59,17 +62,22 @@ export class TeacherMockExamController {
   }
 }
 
+@Roles("STUDENT", "ADMIN")
 @Controller("student/mock-exams")
 export class StudentMockExamController {
   constructor(private readonly mockExamService: MockExamService) {}
 
   @Get()
-  listMockExams(@Query("studentId") studentId?: string) {
-    return this.mockExamService.listStudentMockExams(studentId);
+  listMockExams(@Req() req: { user?: AuthenticatedUser }) {
+    return this.mockExamService.listStudentMockExams(req.user);
   }
 
   @Post(":id/submit")
-  submitMockExam(@Param("id") id: string, @Body() body: SubmitMockExamDto) {
-    return this.mockExamService.submitMockExam(id, body);
+  submitMockExam(
+    @Param("id") id: string,
+    @Body() body: SubmitMockExamDto,
+    @Req() req: { user?: AuthenticatedUser },
+  ) {
+    return this.mockExamService.submitMockExam(id, body, req.user);
   }
 }

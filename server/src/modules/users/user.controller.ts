@@ -4,8 +4,11 @@ import { memoryStorage } from "multer";
 import { UserService } from "./user.service";
 import { CompleteStaffRegistrationDto, CreateUserDto, InviteStaffDto, ReviewStaffInvitationDto, UpdateUserDto } from "./user.dto";
 import { Public } from "../auth/public.decorator";
+import { Roles } from "../auth/roles.decorator";
 import { R2StorageService } from "../storage/r2-storage.service";
+import { DOCUMENT_UPLOAD_LIMITS, documentFileFilter } from "../storage/document-upload";
 
+@Roles("ADMIN")
 @Controller("admin/users")
 export class UserController {
   constructor(
@@ -13,6 +16,7 @@ export class UserController {
     private readonly r2StorageService: R2StorageService,
   ) {}
 
+  @Roles("ADMIN", "TEACHER")
   @Get()
   listUsers() {
     return this.userService.listUsers();
@@ -50,7 +54,8 @@ export class UserController {
       ],
       {
         storage: memoryStorage(),
-        limits: { fileSize: 15 * 1024 * 1024 },
+        limits: DOCUMENT_UPLOAD_LIMITS,
+        fileFilter: documentFileFilter,
       },
     ),
   )
@@ -89,6 +94,7 @@ export class UserController {
     return this.userService.deletePendingStaffInvitation(id);
   }
 
+  @Roles("ADMIN", "TEACHER")
   @Get("by-email/:email")
   async getUserByEmail(@Param("email") email: string) {
     const user = await this.userService.getUserByEmail(decodeURIComponent(email));
@@ -98,11 +104,13 @@ export class UserController {
     return user;
   }
 
+  @Roles("ADMIN", "TEACHER")
   @Get(":id/assigned-courses")
   getStaffAssignedCourses(@Param("id") id: string) {
     return this.userService.getStaffAssignedCourses(id);
   }
 
+  @Roles("ADMIN", "TEACHER")
   @Get(":id")
   getUser(@Param("id") id: string) {
     return this.userService.getUser(id);

@@ -1,4 +1,7 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { AccountThrottlerGuard } from "./common/account-throttler.guard";
 import { AuthModule } from "./modules/auth/auth.module";
 import { ContentModule } from "./modules/content/content.module";
 import { QuizModule } from "./modules/quiz/quiz.module";
@@ -14,7 +17,8 @@ import { SystemModule } from "./modules/system/system.module";
 import { AppController } from "./app.controller";
 
 @Module({
-  imports: [AuthModule, ContentModule, QuizModule, MockExamModule, UsersModule, StatsModule, ClassesModule, AdmissionModule, TutorModule, RecommendationsModule, GuardianModule, SystemModule],
+  imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]), AuthModule, ContentModule, QuizModule, MockExamModule, UsersModule, StatsModule, ClassesModule, AdmissionModule, TutorModule, RecommendationsModule, GuardianModule, SystemModule],
   controllers: [AppController],
+  providers: [{ provide: APP_GUARD, useClass: AccountThrottlerGuard }],
 })
 export class AppModule {}

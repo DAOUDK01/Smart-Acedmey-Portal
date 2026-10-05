@@ -2,8 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadFaceLandmarker } from "@/lib/gaze/face-landmarker-loader";
 
 describe("loadFaceLandmarker", () => {
-  const originalImport = vi.hoisted(() => import("@mediapipe/tasks-vision"));
-  
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();

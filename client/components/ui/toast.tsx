@@ -70,7 +70,7 @@ const kindTone: Record<ToastKind, string> = {
 export function Toaster() {
   const items = useToastStore();
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-[100] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-3">
+    <div aria-live="polite" className="pointer-events-none fixed right-4 top-4 z-[100] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-3">
       <AnimatePresence initial={false}>
         {items.map((item) => {
           const Icon = kindIcon[item.kind];

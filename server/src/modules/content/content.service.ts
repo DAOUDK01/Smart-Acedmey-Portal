@@ -31,11 +31,17 @@ export class ContentService {
     private readonly transcription: TranscriptionService,
   ) {}
 
-  listCourses() {
-    return this.prisma.$queryRaw`
+  /** Students and guardians only ever receive published content; drafts are staff-only. */
+  private isLearner(user?: { role?: string }) {
+    return user?.role === "STUDENT" || user?.role === "GUARDIAN";
+  }
+
+  async listCourses(user?: { role?: string }) {
+    const courses = await this.prisma.$queryRaw<Array<{ isPublished: boolean }>>`
       SELECT "id", "code", "title", "description", "level", "isPublished", "sortOrder", "createdAt", "updatedAt"
       FROM "Course" ORDER BY "createdAt" DESC
     `;
+    return this.isLearner(user) ? courses.filter((course) => course.isPublished) : courses;
   }
 
   async createCourse(body: CreateCourseDto) {
@@ -67,7 +73,7 @@ export class ContentService {
     return { success: true };
   }
 
-  async listLectures() {
+  async listLectures(user?: { role?: string }) {
     const lectures = await this.prisma.lecture.findMany({
       orderBy: { createdAt: "desc" },
     });
@@ -80,10 +86,12 @@ export class ContentService {
       list.push(checkpoint);
       byLecture.set(checkpoint.lectureId, list);
     }
-    return lectures.map((lecture) => ({
-      ...lecture,
-      checkpoints: byLecture.get(lecture.id) ?? [],
-    }));
+    return lectures
+      .filter((lecture) => !this.isLearner(user) || lecture.publishedAt)
+      .map((lecture) => ({
+        ...lecture,
+        checkpoints: byLecture.get(lecture.id) ?? [],
+      }));
   }
 
   async generateTranscriptForVideo(
@@ -438,8 +446,33 @@ Return ONLY the transcript text without headings or markdown.`;
     return this.prisma.checkpoint.delete({ where: { id } });
   }
 
-  listProgress() {
+  /**
+   * Staff see every student's progress. Students only see their own, and guardians
+   * only the students linked to them; rows are keyed by email or user id.
+   */
+  async listProgress(user?: { userId?: string; role?: string }) {
+    let where: { studentId: { in: string[] } } | undefined;
+
+    if (user?.role === "STUDENT" || user?.role === "GUARDIAN") {
+      const self = user.userId
+        ? await this.prisma.user.findUnique({ where: { id: user.userId }, select: { id: true, email: true } })
+        : null;
+      if (!self) return [];
+
+      if (user.role === "STUDENT") {
+        where = { studentId: { in: [self.email, self.id] } };
+      } else {
+        const links = await this.prisma.guardianStudentLink.findMany({
+          where: { OR: [{ guardianId: self.id }, { guardianEmail: self.email.toLowerCase() }] },
+        });
+        where = {
+          studentId: { in: links.flatMap((link) => [link.studentEmail, link.studentId]) },
+        };
+      }
+    }
+
     return this.prisma.studentProgress.findMany({
+      where,
       orderBy: { updatedAt: "desc" },
     });
   }

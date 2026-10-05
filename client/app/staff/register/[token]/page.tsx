@@ -289,6 +289,7 @@ export default function StaffRegistrationPage() {
         </span>
         <input
           type="file"
+          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp"
           multiple={multiple}
           className="mt-3 block w-full text-sm text-slate-400 file:mr-4 file:rounded-xl file:border-0 file:bg-accent-purple file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-accent-purple/90"
           onChange={(event) => updateFiles(field, event)}

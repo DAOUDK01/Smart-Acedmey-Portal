@@ -138,7 +138,9 @@ export function LecturePlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
   const maxWatchedRef = useRef(0);
-  const lastCheckTimeRef = useRef(0);
+  const lastTickWallRef = useRef<number | null>(null);
+  const playbackRateRef = useRef(1);
+  const lastCheckTimeRef = useRef(-1);
   const quizzesRef = useRef(quizzes);
   const answeredRef = useRef(answeredQuizIds);
   const currentQuizRef = useRef<LectureQuiz | null>(null);
@@ -155,6 +157,7 @@ export function LecturePlayer({
   const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
+  playbackRateRef.current = playbackRate;
   const [qualityLevels, setQualityLevels] = useState<{ index: number; label: string }[]>([]);
   const [activeLevelIndex, setActiveLevelIndex] = useState(-1);
   const [autoQuality, setAutoQuality] = useState(true);
@@ -165,6 +168,8 @@ export function LecturePlayer({
   const [sessionQuizzes, setSessionQuizzes] = useState<LectureQuiz[]>([]);
   const [sessionIndex, setSessionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [quizResult, setQuizResult] = useState<{
     passed: boolean;
     correctAnswer: string;
@@ -191,6 +196,14 @@ export function LecturePlayer({
     currentQuizRef.current = currentQuiz;
   }, [currentQuiz]);
 
+  // The player can sit partly below the fold; bring the whole quiz on screen when it opens
+  // so the options and Submit button are never cut off.
+  const quizOpen = currentQuiz !== null;
+  useEffect(() => {
+    if (!quizOpen) return;
+    containerRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [quizOpen]);
+
   const pausePlayback = useCallback(() => {
     if (isYouTube && playerRef.current?.pauseVideo) {
       playerRef.current.pauseVideo();
@@ -202,6 +215,9 @@ export function LecturePlayer({
   }, [isYouTube]);
 
   const resumePlayback = useCallback(() => {
+    // A pending quiz must be answered first: the play button, gaze monitor and
+    // browser autoplay all route through here or the handlers below.
+    if (sessionActiveRef.current) return;
     if (isYouTube && playerRef.current?.playVideo) {
       playerRef.current.playVideo();
       setIsPlaying(true);
@@ -222,8 +238,15 @@ export function LecturePlayer({
     (currentTime: number) => {
       const allowed = maxWatchedRef.current;
 
-      // Jumped forward more than normal playback allows between polls
-      if (currentTime > allowed + 1.25) {
+      // Normal playback can advance by more than one poll interval when the page stalls
+      // (slow device, busy tab, buffering catch-up). Allow for the real time that passed
+      // so only a genuine jump forward counts as skipping.
+      const now = performance.now();
+      const elapsedSeconds = lastTickWallRef.current === null ? 0 : (now - lastTickWallRef.current) / 1000;
+      lastTickWallRef.current = now;
+      const tolerance = 1.25 + Math.min(elapsedSeconds, 5) * playbackRateRef.current;
+
+      if (currentTime > allowed + tolerance) {
         if (isYouTube && playerRef.current?.seekTo) {
           playerRef.current.seekTo(allowed, true);
           playerRef.current.pauseVideo();
@@ -263,10 +286,13 @@ export function LecturePlayer({
 
       if (pending.length > 0 && !sessionActiveRef.current) {
         const difficulty = pending[0].difficulty;
+        // Only questions the student has already reached: never quiz them on video they have not watched yet.
         const group = quizzesRef.current
           .filter(
             (quiz) =>
               quiz.difficulty === difficulty &&
+              quiz.timestamp !== undefined &&
+              quiz.timestamp <= currentTime &&
               !answeredRef.current.has(quiz.id),
           )
           .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
@@ -284,6 +310,14 @@ export function LecturePlayer({
   const tickPlayback = useCallback(() => {
     const currentTime = enforceProgressLock(getCurrentTime());
     checkQuizTriggers(currentTime);
+
+    // Safety net: if anything managed to start playback during a quiz, stop it again.
+    if (sessionActiveRef.current) {
+      const stillPlaying = isYouTube
+        ? playerRef.current?.getPlayerState?.() === window.YT?.PlayerState.PLAYING
+        : Boolean(videoRef.current && !videoRef.current.paused);
+      if (stillPlaying) pausePlayback();
+    }
 
     let total = 0;
     if (isYouTube && playerRef.current?.getDuration) {
@@ -303,7 +337,7 @@ export function LecturePlayer({
         Math.min(100, (maxWatchedRef.current / total) * 100),
       );
     }
-  }, [checkQuizTriggers, enforceProgressLock, getCurrentTime, isYouTube]);
+  }, [checkQuizTriggers, enforceProgressLock, getCurrentTime, isYouTube, pausePlayback]);
 
   const handleTimeUpdate = () => {
     tickPlayback();
@@ -322,7 +356,8 @@ export function LecturePlayer({
 
   useEffect(() => {
     maxWatchedRef.current = 0;
-    lastCheckTimeRef.current = 0;
+    lastTickWallRef.current = null;
+    lastCheckTimeRef.current = -1;
     sessionActiveRef.current = false;
     setCurrentQuiz(null);
     setSessionQuizzes([]);
@@ -528,17 +563,28 @@ export function LecturePlayer({
       : qualityLevels.find((level) => level.index === activeLevelIndex)?.label ?? "Auto";
 
   const handleSubmitAnswer = async () => {
-    if (!currentQuiz || !selectedAnswer) return;
-    const result = await onSubmitAnswer(currentQuiz, selectedAnswer);
-    if (result) {
-      setQuizResult(result);
-      onQuizAnswered(currentQuiz.id);
+    if (!currentQuiz || !selectedAnswer || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await onSubmitAnswer(currentQuiz, selectedAnswer);
+      if (result) {
+        setQuizResult(result);
+        onQuizAnswered(currentQuiz.id);
+      } else {
+        setSubmitError("We couldn't submit your answer. Check your connection and try again.");
+      }
+    } catch {
+      setSubmitError("We couldn't submit your answer. Check your connection and try again.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleNextQuestion = () => {
     const next = sessionIndex + 1;
     setQuizResult(null);
+    setSubmitError(null);
     setSelectedAnswer(null);
     setSessionIndex(next);
     setCurrentQuiz(sessionQuizzes[next] ?? null);
@@ -565,6 +611,7 @@ export function LecturePlayer({
 
   const seekBackward = useCallback(
     (seconds = 5) => {
+      if (sessionActiveRef.current) return;
       const current = getCurrentTime();
       const target = Math.max(0, current - seconds);
 
@@ -627,9 +674,70 @@ export function LecturePlayer({
         </div>
       ) : null}
 
+      <div
+        ref={containerRef}
+        className={cn(
+          "relative aspect-video w-full overflow-hidden bg-black",
+          // On phones the 16:9 box is too short to hold a question, its options and Submit.
+          currentQuiz && "min-h-[34rem] sm:min-h-0",
+          isFullscreen && "aspect-auto h-screen w-screen",
+        )}
+      >
+        {isYouTube ? (
+          <>
+            <div id={playerContainerId} className="h-full w-full" title={title} />
+            {/* Block direct interaction with the YouTube iframe (prevents timeline clicks) */}
+            <div className="absolute inset-0 z-10" aria-hidden="true" />
+          </>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              poster={resolvedPoster}
+              className="h-full w-full"
+              crossOrigin="anonymous"
+              onTimeUpdate={handleTimeUpdate}
+              onSeeking={handleSeeking}
+              onLoadedMetadata={() => {
+                if (videoRef.current?.duration) {
+                  setDuration(videoRef.current.duration);
+                }
+              }}
+              onPlay={() => {
+                if (sessionActiveRef.current) {
+                  videoRef.current?.pause();
+                  return;
+                }
+                setIsPlaying(true);
+              }}
+              onPause={() => setIsPlaying(false)}
+              onWaiting={() => setBuffering(true)}
+              onCanPlay={() => setBuffering(false)}
+              onPlaying={() => setBuffering(false)}
+              onError={() => {
+                if (!hlsReady) {
+                  setPlaybackError("Video playback failed. Try again later.");
+                }
+              }}
+            >
+              {!hlsReady ? (
+                <source src={resolvedVideoUrl} type="video/mp4" />
+              ) : null}
+              Your browser does not support the video tag.
+            </video>
+            {buffering ? (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+              </div>
+            ) : null}
+          </>
+        )}
+
       {currentQuiz ? (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/85 p-4">
-          <div className="w-full max-w-2xl rounded-3xl border border-accent-purple/15 bg-ink-900 p-6 shadow-2xl">
+        <div role="dialog" aria-modal="true" aria-label="Lecture quiz" className="absolute inset-0 z-50 flex overflow-y-auto bg-slate-900/85 p-4">
+          <div className="m-auto w-full max-w-2xl rounded-3xl border border-accent-purple/15 bg-ink-900 p-6 shadow-2xl">
             <div className="mb-6 flex items-center gap-2">
               <span
                 className={cn(
@@ -679,14 +787,19 @@ export function LecturePlayer({
                     </button>
                   ))}
                 </div>
+                {submitError ? (
+                  <p role="alert" className="mt-4 text-sm font-medium text-rose-500">
+                    {submitError}
+                  </p>
+                ) : null}
                 <Button
                   onClick={handleSubmitAnswer}
-                  disabled={!selectedAnswer}
+                  disabled={!selectedAnswer || submitting}
                   fullWidth
                   size="lg"
                   className="mt-6"
                 >
-                  Submit Answer
+                  {submitting ? "Submitting..." : "Submit Answer"}
                 </Button>
               </>
             ) : (
@@ -737,59 +850,6 @@ export function LecturePlayer({
           </div>
         </div>
       ) : null}
-
-      <div
-        ref={containerRef}
-        className={cn(
-          "relative aspect-video w-full overflow-hidden bg-black",
-          isFullscreen && "aspect-auto h-screen w-screen",
-        )}
-      >
-        {isYouTube ? (
-          <>
-            <div id={playerContainerId} className="h-full w-full" title={title} />
-            {/* Block direct interaction with the YouTube iframe (prevents timeline clicks) */}
-            <div className="absolute inset-0 z-10" aria-hidden="true" />
-          </>
-        ) : (
-          <>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              poster={resolvedPoster}
-              className="h-full w-full"
-              crossOrigin="anonymous"
-              onTimeUpdate={handleTimeUpdate}
-              onSeeking={handleSeeking}
-              onLoadedMetadata={() => {
-                if (videoRef.current?.duration) {
-                  setDuration(videoRef.current.duration);
-                }
-              }}
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onWaiting={() => setBuffering(true)}
-              onCanPlay={() => setBuffering(false)}
-              onPlaying={() => setBuffering(false)}
-              onError={() => {
-                if (!hlsReady) {
-                  setPlaybackError("Video playback failed. Try again later.");
-                }
-              }}
-            >
-              {!hlsReady ? (
-                <source src={resolvedVideoUrl} type="video/mp4" />
-              ) : null}
-              Your browser does not support the video tag.
-            </video>
-            {buffering ? (
-              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-              </div>
-            ) : null}
-          </>
-        )}
 
         <GazeMonitor
           active={isActive}
@@ -959,8 +1019,9 @@ export function LecturePlayer({
             })}
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            Forward seeking is locked. All questions of the same difficulty are
-            asked together in one popup at the first checkpoint.
+            Forward seeking is locked. Video pauses at each checkpoint and
+            resumes once you answer; questions at the same level that you have
+            already reached are asked together.
           </p>
         </div>
       ) : null}

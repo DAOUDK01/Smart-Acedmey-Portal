@@ -10,6 +10,7 @@ import {
   ChevronLeft, 
   ChevronRight,
   LogOut,
+  X,
   BarChart3,
   FileQuestion,
   Lightbulb,
@@ -42,6 +43,9 @@ interface SidebarProps {
   onItemClick: (id: string) => void;
   userName?: string;
   userEmail?: string;
+  /** Below the lg breakpoint the sidebar is an off-canvas drawer controlled by the shell. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
 const sidebarItems: Record<string, SidebarItem[]> = {
@@ -121,8 +125,24 @@ const sidebarItems: Record<string, SidebarItem[]> = {
   ]
 };
 
-export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }: SidebarProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+export function Sidebar({ role, activeItemId, onItemClick: onItemSelect, userName, userEmail, mobileOpen = false, onMobileClose }: SidebarProps) {
+  const [collapsedPreference, setCollapsedPreference] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(true);
+  // The icon-only rail only makes sense on wide screens; the mobile drawer is always full width.
+  const isCollapsed = collapsedPreference && isDesktop;
+  const setIsCollapsed = setCollapsedPreference;
+  const onItemClick = (id: string) => {
+    onItemSelect(id);
+    onMobileClose?.();
+  };
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const router = useRouter();
   const items = sidebarItems[role] || [];
@@ -169,8 +189,13 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
       initial={false}
       animate={{ width: isCollapsed ? 80 : 280 }}
       transition={{ type: "spring", stiffness: 320, damping: 34 }}
+      id="primary-navigation"
+      aria-label="Primary navigation"
       className={cn(
         "relative flex h-screen flex-col overflow-hidden border-r border-accent-purple/15 bg-[#f6f2fd]/60 text-slate-400 backdrop-blur-2xl z-30 shrink-0",
+        // Off-canvas drawer below lg: solid background so the page does not show through.
+        "max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:!w-[280px] max-lg:max-w-[85vw] max-lg:bg-[#f6f2fd] max-lg:shadow-2xl max-lg:transition-transform max-lg:duration-200",
+        mobileOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full",
         isCollapsed ? "px-3" : "px-4"
       )}
     >
@@ -196,11 +221,19 @@ export function Sidebar({ role, activeItemId, onItemClick, userName, userEmail }
         </AnimatePresence>
         
         <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-all duration-200 hover:bg-accent-purple/[0.08] hover:text-slate-900 active:scale-90"
+          onClick={() => setIsCollapsed(!collapsedPreference)}
+          className="hidden h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-all duration-200 hover:bg-accent-purple/[0.08] hover:text-slate-900 active:scale-90 lg:flex"
           aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+        <button
+          type="button"
+          onClick={onMobileClose}
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-all duration-200 hover:bg-accent-purple/[0.08] hover:text-slate-900 active:scale-90 lg:hidden"
+          aria-label="Close menu"
+        >
+          <X size={18} />
         </button>
       </div>
 

@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PremiumCard } from "../premium-card";
 import { Button } from "../ui/button";
+import { Dialog } from "../ui/dialog";
 
 export type MockExamQuiz = {
   id: string;
@@ -57,8 +58,7 @@ type MockExamsProps = {
   ) => Promise<QuizResult | null>;
   onSubmitExam: (
     exam: MockExam,
-    score: number,
-    totalQuestions: number,
+    answers: Record<string, string>,
   ) => Promise<boolean>;
 };
 
@@ -142,6 +142,8 @@ export function MockExams({
       if (phaseRef.current !== "running") return;
       const exam = activeExam;
       if (!exam) return;
+      // The result screen renders from resultExam; without this it came up blank.
+      setResultExam(exam);
       setPhase("finished");
 
       const correct = Object.values(questionResults).filter(Boolean).length;
@@ -155,7 +157,7 @@ export function MockExams({
         onQuizAnswered(quiz.id);
       }
 
-      await onSubmitExam(exam, correct, exam.questions.length).catch(() => false);
+      await onSubmitExam(exam, selectedAnswers).catch(() => false);
       setSubmittedExamIds((current) => {
         const next = new Set(current);
         next.add(exam.id);
@@ -174,11 +176,18 @@ export function MockExams({
     ],
   );
 
-  const terminateExam = useCallback(() => {
+  const terminateExam = useCallback(async () => {
     if (phaseRef.current !== "running") return;
+    const exam = activeExam;
     setPhase("terminated");
     setScore(0);
-  }, []);
+    if (!exam) return;
+
+    // Record the attempt with no answers (score 0). Otherwise leaving the tab would
+    // let a student see the correct answers and simply retake the exam.
+    await onSubmitExam(exam, {}).catch(() => false);
+    setSubmittedExamIds((current) => new Set(current).add(exam.id));
+  }, [activeExam, onSubmitExam]);
 
   useEffect(() => {
     if (phase !== "running" || !activeExam) return;
@@ -247,7 +256,7 @@ export function MockExams({
     const displayTime = isTimed ? timeRemaining : elapsed;
 
     const examOverlay = (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm sm:p-8">
+      <Dialog label={exam.title || "Mock exam"} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-sm sm:p-8">
         <div className="flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-accent-purple/15 bg-ink-900 shadow-2xl">
           <div className="flex items-center justify-between gap-4 border-b border-accent-purple/15 px-6 py-4">
             <div className="min-w-0">
@@ -398,7 +407,7 @@ export function MockExams({
             )}
           </div>
         </div>
-      </div>
+      </Dialog>
     );
 
     if (typeof window === "undefined") return null;

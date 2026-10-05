@@ -73,6 +73,7 @@ model OtpCode {
   userId       String
   purpose      OtpPurpose
   codeHash     String
+  attempts     Int        @default(0)
   expiresAt    DateTime
   consumedAt   DateTime?
   createdAt    DateTime   @default(now())

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -8,15 +9,23 @@ import {
   Req,
 } from "@nestjs/common";
 import { Request } from "express";
+import { Throttle } from "@nestjs/throttler";
+import { PrismaService } from "../../prisma.service";
+import { studentKeyFor } from "../auth/identity";
 import { TutorService } from "./tutor.service";
 import { TutorIngestionService } from "./tutor-ingestion.service";
 import { TutorVectorStore } from "./tutor-vector-store.service";
 import { TutorChatMessage } from "./tutor.types";
 
+const MAX_MESSAGE_LENGTH = 2000;
+const MAX_HISTORY_MESSAGES = 20;
+
 type AuthenticatedRequest = Request & {
   user?: { userId?: string; role?: string };
 };
 
+// Every tutor call can trigger paid LLM usage.
+@Throttle({ default: { ttl: 60_000, limit: 20 } })
 @Controller("tutor")
 export class TutorController {
   private readonly logger = new Logger(TutorController.name);
@@ -25,22 +34,41 @@ export class TutorController {
     private readonly tutorService: TutorService,
     private readonly ingestionService: TutorIngestionService,
     private readonly vectorStore: TutorVectorStore,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post("chat")
-  chat(
+  async chat(
+    @Req() req: AuthenticatedRequest,
     @Body()
     body: {
       message: string;
-      studentId?: string;
       lectureId?: string;
       history?: TutorChatMessage[];
     },
   ) {
-    return this.tutorService.chat(body.message, {
-      studentId: body.studentId,
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) throw new BadRequestException("Message is required");
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      throw new BadRequestException(`Message must be ${MAX_MESSAGE_LENGTH} characters or fewer`);
+    }
+
+    // Bound what is forwarded to the LLM so one request cannot run up cost.
+    const history = Array.isArray(body.history)
+      ? body.history.slice(-MAX_HISTORY_MESSAGES).map((entry) => ({
+          ...entry,
+          content: String(entry?.content ?? "").slice(0, MAX_MESSAGE_LENGTH),
+        }))
+      : undefined;
+
+    // A student's context is always their own; it is never taken from the request body.
+    const studentId =
+      req.user?.role === "STUDENT" ? await studentKeyFor(this.prisma, req.user) : undefined;
+
+    return this.tutorService.chat(message, {
+      studentId,
       lectureId: body.lectureId,
-      history: body.history,
+      history,
     });
   }
 
@@ -51,7 +79,7 @@ export class TutorController {
       return await this.ingestionService.rebuildIndex();
     } catch (error) {
       this.logger.error(`Index rebuild failed: ${error}`);
-      return { indexed: false, error: String(error) };
+      return { indexed: false, error: "Index rebuild failed. See server logs for details." };
     }
   }
 

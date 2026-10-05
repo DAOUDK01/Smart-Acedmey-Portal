@@ -6,6 +6,7 @@ import { PremiumCard } from "@/components/premium-card";
 import { Alert } from "@/components/ui/alert";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { usePortalLock } from "@/lib/use-portal-lock";
 import { getInitialTab, useTabHistory } from "@/lib/use-tab-history";
@@ -445,15 +446,22 @@ export function AdminConsole() {
     const adminNotes = nextStatus === "APPROVED" ? "" : window.prompt("Add notes for the staff email:") || "";
     setIsProcessing(true);
     try {
-      await apiFetch(`/api/admin/users/staff-invitations/${invitationId}/review`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: nextStatus, adminNotes }),
-      });
-      showStatus("Staff review updated and email sent.");
+      const result = await apiFetch<{ emailSent?: boolean; emailError?: string }>(
+        `/api/admin/users/staff-invitations/${invitationId}/review`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextStatus, adminNotes }),
+        },
+      );
+      showStatus(
+        result.emailSent
+          ? "Staff review updated and the applicant was notified by email."
+          : `Staff review updated, but the applicant could NOT be emailed (${result.emailError || "unknown error"}). Please tell them directly.`,
+      );
       setSelectedStaffInvitation(null);
       await loadAll();
     } catch (error) {
-      showStatus("Failed to update staff review.");
+      showStatus(error instanceof Error ? error.message : "Failed to update staff review.");
     } finally {
       setIsProcessing(false);
     }
@@ -1053,7 +1061,7 @@ export function AdminConsole() {
         )}
 
         {editingCourse && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+          <Dialog label="Edit course" onClose={() => setEditingCourse(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
             <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-900 shadow-2xl">
               <div className="flex items-start justify-between border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
@@ -1064,6 +1072,7 @@ export function AdminConsole() {
                 <button
                   type="button"
                   onClick={() => setEditingCourse(null)}
+                  aria-label="Close dialog"
                   className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:text-rose-600"
                 >
                   <X size={18} />
@@ -1106,11 +1115,11 @@ export function AdminConsole() {
                 </div>
               </form>
             </div>
-          </div>
+          </Dialog>
         )}
 
         {selectedStaffUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+          <Dialog label="Staff profile" onClose={() => setSelectedStaffUser(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
             <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-900 shadow-2xl">
               <div className="flex items-start justify-between border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
@@ -1143,11 +1152,11 @@ export function AdminConsole() {
                 </div>
               </div>
             </div>
-          </div>
+          </Dialog>
         )}
 
         {selectedStaffInvitation && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+          <Dialog label="Staff application" onClose={() => setSelectedStaffInvitation(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
             <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-950 shadow-2xl">
               <div className="flex items-start justify-between gap-4 border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
@@ -1295,7 +1304,7 @@ export function AdminConsole() {
                 )}
               </div>
             </div>
-          </div>
+          </Dialog>
         )}
       </div>
     </DashboardShell>

@@ -6,6 +6,7 @@ import { PrismaService } from "../../prisma.service";
 import { EmailService } from "./email.service";
 import { APP_GUARD } from "@nestjs/core";
 import { JwtAuthGuard } from "./jwt-auth.guard";
+import { RolesGuard } from "./roles.guard";
 import { SystemModule } from "../system/system.module";
 
 const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET?.trim();
@@ -28,6 +29,7 @@ if (!accessTokenSecret || !accessTokenExpiry) {
     PrismaService,
     EmailService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
 export class AuthModule {}

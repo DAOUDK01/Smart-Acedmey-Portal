@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomInt, randomUUID } from "crypto";
+import { hashPassword } from "../auth/password";
 import { PrismaService } from "../../prisma.service";
-import { EmailService } from "../auth/email.service";
+import { EmailService, escapeHtml, frontendBaseUrl } from "../auth/email.service";
 
 @Injectable()
 export class GuardianService {
@@ -276,33 +277,29 @@ export class GuardianService {
     const password = this.generateGuardianPassword();
     await this.prisma.user.update({
       where: { id: guardian.id },
-      data: { passwordHash: this.hash(password), isActive: true },
+      data: { passwordHash: await hashPassword(password), isActive: true },
     });
 
     const student = await this.prisma.user.findUnique({ where: { email } });
     const studentName = student?.name ?? studentEmail;
-    const loginLink = `${process.env.FRONTEND_URL?.replace(/\/$/, "") || ""}/login`;
-    try {
-      await this.emailService.sendEmail(
-        guardian.email,
-        "Your SmartAcademy guardian account",
-        `<p>Hello ${guardian.name},</p><p>Your guardian account for <strong>${studentName}</strong> is ready.</p><p>Sign in at <a href="${loginLink}">${loginLink}</a> with:</p><ul><li>Email: <strong>${guardian.email}</strong></li><li>Password: <strong>${password}</strong></li></ul><p>You can watch your child's progress, lecture recommendations, quiz attempts and subject details.</p>`,
-        `Your SmartAcademy guardian account for ${studentName} is ready. Sign in at ${loginLink} with email ${guardian.email} and password ${password}.`,
-      );
-      return { guardianEmail: guardian.email, emailSent: true };
-    } catch (error) {
-      return {
-        guardianEmail: guardian.email,
-        emailSent: false,
-        emailError: error instanceof Error ? error.message : "Email failed",
-      };
-    }
+    const loginLink = `${frontendBaseUrl()}/login`;
+    const mail = await this.emailService.trySend(
+      guardian.email,
+      "Your SmartAcademy guardian account",
+      `<p>Hello ${escapeHtml(guardian.name)},</p><p>Your guardian account for <strong>${escapeHtml(studentName)}</strong> is ready.</p><p>Sign in at <a href="${loginLink}">${loginLink}</a> with:</p><ul><li>Email: <strong>${escapeHtml(guardian.email)}</strong></li><li>Password: <strong>${password}</strong></li></ul><p>You can watch your child's progress, lecture recommendations, quiz attempts and subject details.</p>`,
+      `Your SmartAcademy guardian account for ${studentName} is ready. Sign in at ${loginLink} with email ${guardian.email} and password ${password}.`,
+    );
+    return {
+      guardianEmail: guardian.email,
+      emailSent: mail.sent,
+      ...(mail.sent ? {} : { emailError: mail.reason }),
+    };
   }
 
   private generateGuardianPassword(): string {
     const charset = "abcdefghjkmnpqrstuvwxyz23456789";
     let value = "";
-    for (let i = 0; i < 10; i += 1) value += charset[Math.floor(Math.random() * charset.length)];
+    for (let i = 0; i < 10; i += 1) value += charset[randomInt(charset.length)];
     return value;
   }
 

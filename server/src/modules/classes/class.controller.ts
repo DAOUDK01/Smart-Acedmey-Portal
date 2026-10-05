@@ -1,8 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from "@nestjs/common";
 import { Request } from "express";
+import { Roles } from "../auth/roles.decorator";
 import { ClassService } from "./class.service";
 import { AssignClassCourseDto, CreateClassDto, CreateSectionDto, UpdateClassCourseDto, UpdateClassDto, UpdateSectionDto } from "./class.dto";
 
+@Roles("ADMIN")
 @Controller("admin/classes")
 export class ClassController {
   constructor(private readonly classService: ClassService) {}
@@ -19,6 +21,7 @@ export class ClassController {
   @Delete("courses/:id") removeCourseAssignment(@Param("id") id: string) { return this.classService.removeCourseAssignment(id); }
 }
 
+@Roles("TEACHER", "ADMIN")
 @Controller("teacher/me")
 export class TeacherMeController {
   constructor(private readonly classService: ClassService) {}

@@ -1,8 +1,12 @@
-import { BadRequestException, Controller, Get, Post, Patch, Delete, Param, Body, Query } from "@nestjs/common";
+import { BadRequestException, Controller, Get, Post, Patch, Delete, Param, Body, Query, Req } from "@nestjs/common";
+import { AuthenticatedUser } from "../auth/identity";
+import { Roles } from "../auth/roles.decorator";
+import { Throttle } from "@nestjs/throttler";
 import { QuizService } from "./quiz.service";
 import { CreateQuizQuestionDto, UpdateQuizQuestionDto, CreateQuizAttemptDto } from "./quiz.dto";
 import { QuizStatus } from "@prisma/client";
 
+@Roles("ADMIN", "TEACHER")
 @Controller("admin/quiz")
 export class QuizController {
   constructor(private readonly quizService: QuizService) {}
@@ -17,6 +21,7 @@ export class QuizController {
     return this.quizService.getQuizQuestion(id);
   }
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post("generate")
   generateQuizQuestions(
     @Body()
@@ -65,6 +70,7 @@ export class QuizController {
   }
 }
 
+@Roles("STUDENT", "ADMIN")
 @Controller("student/quiz")
 export class StudentQuizController {
   constructor(private readonly quizService: QuizService) {}
@@ -72,6 +78,11 @@ export class StudentQuizController {
   @Get("questions")
   listQuizQuestions() {
     return this.quizService.listQuizQuestionsByStatus(QuizStatus.APPROVED);
+  }
+
+  @Get("attempts/me")
+  listMyAnsweredQuizIds(@Req() req: { user?: AuthenticatedUser }) {
+    return this.quizService.listAnsweredQuizIds(req.user);
   }
 
   @Get("mock-exams")
@@ -85,11 +96,17 @@ export class StudentQuizController {
   }
 
   @Post("attempts")
-  createQuizAttempt(@Body() body: CreateQuizAttemptDto) {
-    return this.quizService.createQuizAttempt(body);
+  async createQuizAttempt(
+    @Body() body: CreateQuizAttemptDto,
+    @Req() req: { user?: AuthenticatedUser },
+  ) {
+    const studentId = await this.quizService.resolveStudentKey(req.user);
+    const score = Math.min(100, Math.max(0, body.score));
+    return this.quizService.createQuizAttempt({ ...body, studentId, score });
   }
 }
 
+@Roles("TEACHER", "ADMIN")
 @Controller("teacher/quizzes")
 export class TeacherQuizController {
   constructor(private readonly quizService: QuizService) {}
@@ -104,6 +121,7 @@ export class TeacherQuizController {
     return this.quizService.listQuizQuestionsByStatus(QuizStatus.APPROVED);
   }
 
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post("generate")
   generateQuizQuestions(
     @Body()
@@ -157,11 +175,14 @@ export class TeacherQuizController {
     return this.quizService.rejectQuiz(id, body.reviewedBy);
   }
 
+  @Roles("STUDENT", "ADMIN")
   @Post(":id/attempt")
   async createQuizAttempt(
     @Param("id") quizId: string,
-    @Body() body: { studentId: string; answer: string; responseTime: number },
+    @Body() body: { answer: string; responseTime: number },
+    @Req() req: { user?: AuthenticatedUser },
   ) {
+    const studentId = await this.quizService.resolveStudentKey(req.user);
     const quizQuestion = await this.quizService.getApprovedQuizForAttempt(quizId);
     if (!quizQuestion) {
       throw new BadRequestException("Quiz is not available for students");
@@ -171,7 +192,7 @@ export class TeacherQuizController {
     const score = passed ? 100 : 0;
     const attempt = await this.quizService.createQuizAttempt({
       quizId,
-      studentId: body.studentId,
+      studentId,
       score,
       responseTime: body.responseTime,
       passed,

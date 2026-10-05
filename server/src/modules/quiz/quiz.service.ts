@@ -4,6 +4,7 @@ import { QuizApiClient } from "./key.client";
 import { AI_QUIZ_PROMPT } from "./ai-quiz.prompt";
 import { CreateQuizQuestionDto, UpdateQuizQuestionDto, CreateQuizAttemptDto } from "./quiz.dto";
 import { QuizStatus } from "@prisma/client";
+import { AuthenticatedUser, studentKeyFor } from "../auth/identity";
 import { serializeQuiz, serializeQuizzes } from "./quiz.serializer";
 import { generateFallbackQuiz, generateFallbackQuizFromSegments } from "./quiz.fallback";
 import { isConfiguredApiKey, resolveOllamaUrl, resolveQuizAiApiKey, resolveQuizAiBaseUrl, resolveQuizAiModel, resolveQuizAiProvider } from "./quiz.provider";
@@ -11,6 +12,10 @@ import {
   LectureSegmentInput,
   splitTranscriptIntoSegments,
 } from "./transcript-segments";
+
+const MAX_GENERATED_QUESTIONS = 12;
+const MAX_TRANSCRIPT_CHARS = 60_000;
+const MAX_SEGMENTS = 60;
 
 @Injectable()
 export class QuizService {
@@ -246,10 +251,19 @@ export class QuizService {
     lectureId?: string,
     topic?: string,
     transcript?: string,
-    questionCount = 3,
-    segments?: LectureSegmentInput[],
+    requestedQuestionCount = 3,
+    requestedSegments?: LectureSegmentInput[],
     durationSeconds?: number,
   ) {
+    // Inputs feed a paid LLM call, so bound them regardless of what the client sent.
+    const questionCount = Math.min(Math.max(Math.trunc(Number(requestedQuestionCount)) || 3, 1), MAX_GENERATED_QUESTIONS);
+    if (transcript && transcript.length > MAX_TRANSCRIPT_CHARS) {
+      throw new BadRequestException(`Transcript must be ${MAX_TRANSCRIPT_CHARS} characters or fewer`);
+    }
+    if (requestedSegments && requestedSegments.length > MAX_SEGMENTS) {
+      throw new BadRequestException(`At most ${MAX_SEGMENTS} segments are allowed`);
+    }
+    const segments = requestedSegments;
     const prompt = topic || transcript || "Generate a quiz";
     const topicName = topic || "Lecture Review";
     const resolvedSegments =
@@ -446,12 +460,27 @@ export class QuizService {
     return attempts;
   }
 
+  /** Quiz ids the authenticated student has already attempted (rows are keyed by email, or id for older data). */
+  async listAnsweredQuizIds(user?: AuthenticatedUser) {
+    const email = await studentKeyFor(this.prisma, user);
+    const attempts = await this.prisma.quizAttempt.findMany({
+      where: { studentId: { in: [email, user?.userId ?? email] } },
+      select: { quizId: true },
+      distinct: ["quizId"],
+    });
+    return attempts.map((attempt) => attempt.quizId);
+  }
+
   async getApprovedQuizForAttempt(id: string) {
     const quiz = await this.prisma.quizQuestion.findUnique({ where: { id } });
     if (!quiz || quiz.status !== QuizStatus.APPROVED) {
       return null;
     }
     return serializeQuiz(quiz);
+  }
+
+  resolveStudentKey(user?: AuthenticatedUser) {
+    return studentKeyFor(this.prisma, user);
   }
 
   async createQuizAttempt(body: CreateQuizAttemptDto) {

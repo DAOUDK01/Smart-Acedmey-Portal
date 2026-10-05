@@ -3,7 +3,8 @@ import { PrismaService } from "../../prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import { EmailService } from "./email.service";
 import { SystemService } from "../system/system.service";
-import { createHash, randomBytes } from "crypto";
+import { createHmac, randomInt, timingSafeEqual } from "crypto";
+import { hashPassword, verifyPassword } from "./password";
 import {
   RegisterDto,
   VerifyEmailOtpDto,
@@ -13,6 +14,8 @@ import {
   ResetPasswordDto,
   PasswordLoginDto,
 } from "./auth.dto";
+
+const MAX_OTP_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -36,7 +39,7 @@ export class AuthService implements OnModuleInit {
       update: {
         name,
         role: "ADMIN",
-        passwordHash: this.hashPassword(password),
+        passwordHash: await hashPassword(password),
         isActive: true,
         emailVerifiedAt: new Date(),
       },
@@ -44,23 +47,36 @@ export class AuthService implements OnModuleInit {
         email,
         name,
         role: "ADMIN",
-        passwordHash: this.hashPassword(password),
+        passwordHash: await hashPassword(password),
         isActive: true,
         emailVerifiedAt: new Date(),
       },
     });
   }
 
-  private hashPassword(password: string): string {
-    return createHash("sha256").update(password).digest("hex");
-  }
-
   private generateOtp(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 
   private hashOtp(otp: string): string {
-    return createHash("sha256").update(otp).digest("hex");
+    const key = process.env.ACCESS_TOKEN_SECRET?.trim() ?? "";
+    return createHmac("sha256", key).update(otp).digest("hex");
+  }
+
+  /** Verifies an OTP; wrong guesses are counted and the code is burned after too many. */
+  private async assertOtp(record: { id: string; codeHash: string; attempts: number }, otp: string) {
+    const expected = Buffer.from(record.codeHash);
+    const actual = Buffer.from(this.hashOtp(otp));
+    if (expected.length === actual.length && timingSafeEqual(expected, actual)) return;
+
+    const attempts = record.attempts + 1;
+    await this.prisma.otpCode.update({
+      where: { id: record.id },
+      data: { attempts, ...(attempts >= MAX_OTP_ATTEMPTS ? { consumedAt: new Date() } : {}) },
+    });
+    throw new BadRequestException(
+      attempts >= MAX_OTP_ATTEMPTS ? "Too many incorrect attempts. Request a new code." : "Invalid OTP",
+    );
   }
 
   private issueTokens(user: { id: string; role: string }) {
@@ -115,11 +131,8 @@ export class AuthService implements OnModuleInit {
       where: { email: body.email.toLowerCase().trim() },
     });
 
-    if (
-      !user?.passwordHash ||
-      user.role === "ADMIN" ||
-      user.passwordHash !== this.hashPassword(body.password)
-    ) {
+    const check = await verifyPassword(body.password, user?.passwordHash);
+    if (!user || !check.valid || user.role === "ADMIN") {
       throw new UnauthorizedException("Invalid email or password");
     }
 
@@ -135,7 +148,7 @@ export class AuthService implements OnModuleInit {
 
     const updatedUser = await this.prisma.user.update({
       where: { id: user.id },
-      data: { lastLoginAt: new Date() },
+      data: { lastLoginAt: new Date(), ...(check.upgrade ? { passwordHash: check.upgrade } : {}) },
     });
     const tokens = this.issueTokens(user);
 
@@ -147,17 +160,14 @@ export class AuthService implements OnModuleInit {
     const user = await this.prisma.user.findUnique({
       where: { email: body.email.toLowerCase().trim() },
     });
-    if (
-      !user?.passwordHash ||
-      user.role !== "ADMIN" ||
-      user.passwordHash !== this.hashPassword(body.password)
-    ) {
+    const check = await verifyPassword(body.password, user?.passwordHash);
+    if (!user || !check.valid || user.role !== "ADMIN") {
       throw new UnauthorizedException("Invalid admin credentials");
     }
 
     const updatedUser = await this.prisma.user.update({
       where: { id: user.id },
-      data: { lastLoginAt: new Date() },
+      data: { lastLoginAt: new Date(), ...(check.upgrade ? { passwordHash: check.upgrade } : {}) },
     });
     const tokens = this.issueTokens(user);
     const { passwordHash: _passwordHash, ...safeUser } = updatedUser;
@@ -181,7 +191,7 @@ export class AuthService implements OnModuleInit {
         email: body.email,
         name: body.name,
         role: body.role,
-        passwordHash: this.hashPassword(body.password),
+        passwordHash: await hashPassword(body.password),
         isActive: false,
       },
     });
@@ -202,7 +212,7 @@ export class AuthService implements OnModuleInit {
 
   async verifyEmailOtp(body: VerifyEmailOtpDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
-    if (!user) throw new UnauthorizedException("User not found");
+    if (!user) throw new BadRequestException("Invalid or expired OTP");
 
     const otpRecord = await this.prisma.otpCode.findFirst({
       where: {
@@ -215,7 +225,7 @@ export class AuthService implements OnModuleInit {
     });
 
     if (!otpRecord) throw new BadRequestException("Invalid or expired OTP");
-    if (otpRecord.codeHash !== this.hashOtp(body.otp)) throw new BadRequestException("Invalid OTP");
+    await this.assertOtp(otpRecord, body.otp);
 
     await this.prisma.otpCode.update({
       where: { id: otpRecord.id },
@@ -233,8 +243,8 @@ export class AuthService implements OnModuleInit {
 
   async requestLoginOtp(body: RequestLoginOtpDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
-    if (!user) throw new UnauthorizedException("User not found");
-    if (user.role === "ADMIN") throw new UnauthorizedException("Use the admin login portal");
+    // Same response whether or not the account exists, so this cannot be used to probe for emails.
+    if (!user || user.role === "ADMIN") return { message: "OTP sent to email" };
 
     const otp = this.generateOtp();
     await this.prisma.otpCode.create({
@@ -252,7 +262,7 @@ export class AuthService implements OnModuleInit {
 
   async verifyLoginOtp(body: VerifyLoginOtpDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
-    if (!user) throw new UnauthorizedException("User not found");
+    if (!user) throw new BadRequestException("Invalid or expired OTP");
     if (user.role === "ADMIN") throw new UnauthorizedException("Use the admin login portal");
 
     const otpRecord = await this.prisma.otpCode.findFirst({
@@ -266,7 +276,7 @@ export class AuthService implements OnModuleInit {
     });
 
     if (!otpRecord) throw new BadRequestException("Invalid or expired OTP");
-    if (otpRecord.codeHash !== this.hashOtp(body.otp)) throw new BadRequestException("Invalid OTP");
+    await this.assertOtp(otpRecord, body.otp);
 
     await this.prisma.otpCode.update({
       where: { id: otpRecord.id },
@@ -284,7 +294,7 @@ export class AuthService implements OnModuleInit {
 
   async forgotPassword(body: ForgotPasswordDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
-    if (!user) throw new UnauthorizedException("User not found");
+    if (!user) return { message: "OTP sent to email" };
 
     const otp = this.generateOtp();
     await this.prisma.otpCode.create({
@@ -302,7 +312,7 @@ export class AuthService implements OnModuleInit {
 
   async resetPassword(body: ResetPasswordDto) {
     const user = await this.prisma.user.findUnique({ where: { email: body.email } });
-    if (!user) throw new UnauthorizedException("User not found");
+    if (!user) throw new BadRequestException("Invalid or expired OTP");
 
     const otpRecord = await this.prisma.otpCode.findFirst({
       where: {
@@ -315,7 +325,7 @@ export class AuthService implements OnModuleInit {
     });
 
     if (!otpRecord) throw new BadRequestException("Invalid or expired OTP");
-    if (otpRecord.codeHash !== this.hashOtp(body.otp)) throw new BadRequestException("Invalid OTP");
+    await this.assertOtp(otpRecord, body.otp);
 
     await this.prisma.otpCode.update({
       where: { id: otpRecord.id },
@@ -324,7 +334,7 @@ export class AuthService implements OnModuleInit {
 
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: this.hashPassword(body.newPassword) },
+      data: { passwordHash: await hashPassword(body.newPassword) },
     });
 
     return { message: "Password reset successfully" };

@@ -346,11 +346,16 @@ export function StudentConsole() {
         apiFetch<Course[]>("/api/admin/courses"),
         apiFetch<Lecture[]>("/api/admin/lectures"),
         apiFetch<Quiz[]>("/api/student/quiz/questions"),
-        apiFetch<MockExam[]>("/api/student/mock-exams?studentId=" + encodeURIComponent(session?.email || "")),
+        apiFetch<MockExam[]>("/api/student/mock-exams"),
         apiFetch<StudentProgress[]>("/api/guardian/progress"),
+        apiFetch<string[]>("/api/student/quiz/attempts/me"),
       ]);
 
-      const [courseResult, lectureResult, quizResult, mockExamResult, progressResult] = results;
+      const [courseResult, lectureResult, quizResult, mockExamResult, progressResult, answeredResult] = results;
+      // The server is the source of truth for answered quizzes; browser storage is only a fallback.
+      if (answeredResult.status === "fulfilled") {
+        setAnsweredQuizzes((current) => new Set([...current, ...answeredResult.value]));
+      }
       const courseData = courseResult.status === "fulfilled" ? courseResult.value : [];
       const lectureData = lectureResult.status === "fulfilled" ? lectureResult.value : [];
       const publishedCourses = courseData.filter((course) => course.isPublished);
@@ -423,8 +428,7 @@ export function StudentConsole() {
 
   const handleSubmitMockExam = async (
     exam: MockExam,
-    score: number,
-    totalQuestions: number,
+    answers: Record<string, string>,
   ) => {
     try {
       const response = await authenticatedFetch(
@@ -433,9 +437,7 @@ export function StudentConsole() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            studentId: session?.email || "student",
-            score,
-            totalQuestions,
+            answers,
           }),
         },
       );
@@ -480,7 +482,8 @@ export function StudentConsole() {
       const key = `smart-academy:answered-quizzes:${session.email}`;
       const raw = window.localStorage.getItem(key);
       if (raw) {
-        setAnsweredQuizzes(new Set(JSON.parse(raw) as string[]));
+        const stored = JSON.parse(raw) as string[];
+        setAnsweredQuizzes((current) => new Set([...current, ...stored]));
       }
     } catch {
       // ignore storage errors
@@ -831,7 +834,7 @@ export function StudentConsole() {
         )}
 
         {activeTab === "courses" && (
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-1 space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">My Enrolled Courses</h3>
               <div className="space-y-3">

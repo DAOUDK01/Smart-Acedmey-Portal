@@ -13,7 +13,10 @@
     "start:ml": "cd server/src/ml/service && python -m uvicorn app:app --host 127.0.0.1 --port 8005",
     "build": "npm run build --workspaces --if-present",
     "build:client": "npm run build -w @smart-academy/web",
-    "build:server": "npm run build -w @smart-academy/api"
+    "build:server": "npm run build -w @smart-academy/api",
+    "test": "npm run test:client && npm run test:server",
+    "test:client": "vitest run",
+    "test:server": "npm test -w @smart-academy/api"
   },
   "devDependencies": {},
   "dependencies": {}

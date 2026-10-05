@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, randomBytes, randomUUID } from "crypto";
+import { hashPassword } from "../auth/password";
 import { PrismaService } from "../../prisma.service";
-import { EmailService } from "../auth/email.service";
+import { EmailService, escapeHtml, frontendBaseUrl } from "../auth/email.service";
 import { SystemService } from "../system/system.service";
 import { GuardianService } from "../guardian/guardian.service";
 import { CompleteAdmissionDto, RequestAdmissionDto, ReviewAdmissionDto } from "./admission.dto";
@@ -63,7 +64,15 @@ export class AdmissionService {
       VALUES (${id},${body.name.trim()},${email},${body.desiredClassId},${JSON.stringify([...new Set(body.selectedCourseIds)])}::jsonb,NOW())
       ON CONFLICT ("email") DO UPDATE SET "name"=EXCLUDED."name", "desiredClassId"=EXCLUDED."desiredClassId", "selectedCourseIds"=EXCLUDED."selectedCourseIds", "status"='REQUESTED'::"StudentAdmissionStatus", "updatedAt"=NOW()
     `;
-    return { success: true, message: "Admission request submitted" };
+    const mail = await this.email.trySend(
+      email,
+      "We received your SmartAcademy admission request",
+      `<p>Hello ${escapeHtml(body.name.trim())},</p>` +
+        `<p>Thank you for applying to SmartAcademy. We have received your admission request.</p>` +
+        `<p>An administrator will review it, and you will receive another email with your registration link once it can proceed.</p>` +
+        `<p>If you did not submit this request, you can ignore this email.</p>`,
+    );
+    return { success: true, message: "Admission request submitted", emailSent: mail.sent };
   }
 
   list() {
@@ -90,9 +99,28 @@ export class AdmissionService {
     if (!sections[0]) throw new BadRequestException("No section has an available slot with all requested courses");
     const token = randomBytes(32).toString("hex"); const tokenHash = this.hash(token); const expiresAt = new Date(Date.now()+7*86400000);
     await this.prisma.$executeRaw`UPDATE "StudentAdmission" SET "assignedSectionId"=${sections[0].id},"tokenHash"=${tokenHash},"expiresAt"=${expiresAt},"status"='INVITED'::"StudentAdmissionStatus","updatedAt"=NOW() WHERE "id"=${id}`;
-    const link = `${process.env.FRONTEND_URL?.replace(/\/$/, "")}/student/register/${token}`;
-    try { await this.email.sendEmail(admission.email,"Complete your SmartAcademy admission",`<p>Hello ${admission.name},</p><p>Your admission request can proceed. You have been allocated Section ${sections[0].name}.</p><p><a href="${link}">Complete registration</a></p><p>This link expires in 7 days.</p>`); return { success:true,emailSent:true,registrationLink:link }; }
-    catch (error) { return { success:true,emailSent:false,registrationLink:link,emailError:error instanceof Error?error.message:"Email failed" }; }
+    return this.sendInvitation(admission, sections[0].name, token);
+  }
+
+  private async sendInvitation(admission: Admission, sectionName: string, token: string) {
+    const link = `${frontendBaseUrl()}/student/register/${token}`;
+    const mail = await this.email.trySend(
+      admission.email,
+      "Complete your SmartAcademy admission",
+      `<p>Hello ${escapeHtml(admission.name)},</p><p>Your admission request can proceed. You have been allocated Section ${escapeHtml(sectionName)}.</p><p><a href="${link}">Complete registration</a></p><p>This link expires in 7 days.</p>`,
+    );
+    return { success: true, emailSent: mail.sent, registrationLink: link, ...(mail.sent ? {} : { emailError: mail.reason }) };
+  }
+
+  /** Issues a fresh link (the old one stops working) and emails it again; for when the first email never arrived. */
+  async resendInvitation(id: string) {
+    const admission = await this.get(id);
+    if (admission.status !== "INVITED") throw new BadRequestException("Only invited requests can be re-sent");
+    const sections = await this.prisma.$queryRaw<{ name: string }[]>`SELECT "name" FROM "ClassSection" WHERE "id"=${admission.assignedSectionId}`;
+    const token = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 7 * 86400000);
+    await this.prisma.$executeRaw`UPDATE "StudentAdmission" SET "tokenHash"=${this.hash(token)},"expiresAt"=${expiresAt},"updatedAt"=NOW() WHERE "id"=${id}`;
+    return this.sendInvitation(admission, sections[0]?.name ?? "", token);
   }
 
   async byToken(token: string) {
@@ -106,7 +134,7 @@ export class AdmissionService {
     await this.assertOnline();
     const found = await this.prisma.$queryRaw<Admission[]>`SELECT * FROM "StudentAdmission" WHERE "tokenHash"=${this.hash(body.token)} LIMIT 1`;
     const admission=found[0]; if(!admission || !admission.expiresAt || admission.expiresAt<new Date()) throw new NotFoundException("Registration link is invalid or expired");
-    const passwordHash=createHash("sha256").update(body.password).digest("hex");
+    const passwordHash=await hashPassword(body.password);
     await this.prisma.$executeRaw`INSERT INTO "User" ("id","role","name","email","passwordHash","phoneNumber","isActive","emailVerifiedAt","createdAt","updatedAt") VALUES (${randomUUID()},'STUDENT'::"UserRole",${admission.name},${admission.email},${passwordHash},${body.phoneNumber},false,NOW(),NOW(),NOW()) ON CONFLICT ("email") DO UPDATE SET "passwordHash"=${passwordHash},"phoneNumber"=${body.phoneNumber},"isActive"=false,"updatedAt"=NOW()`;
     await this.prisma.$executeRaw`UPDATE "StudentAdmission" SET "phoneNumber"=${body.phoneNumber},"personalDetails"=${JSON.stringify(body.personalDetails)}::jsonb,"guardianDetails"=${JSON.stringify(body.guardianDetails)}::jsonb,"educationDetails"=${JSON.stringify(body.educationDetails)}::jsonb,"documentLinks"=${JSON.stringify(body.documentLinks||[])}::jsonb,"status"='SUBMITTED'::"StudentAdmissionStatus","submittedAt"=NOW(),"updatedAt"=NOW() WHERE "id"=${admission.id}`;
     const updated = await this.get(admission.id);
@@ -115,7 +143,12 @@ export class AdmissionService {
       updated.name,
       updated.guardianDetails ?? {},
     );
-    return { success: true, guardian };
+    const mail = await this.email.trySend(
+      updated.email,
+      "SmartAcademy registration received",
+      `<p>Hello ${escapeHtml(updated.name)},</p><p>We have received your completed registration form. An administrator will review it and email you the decision.</p><p>You will be able to sign in once your admission is approved.</p>`,
+    );
+    return { success: true, guardian, emailSent: mail.sent };
   }
 
   async review(id:string,body:ReviewAdmissionDto){
@@ -127,8 +160,17 @@ export class AdmissionService {
       await this.prisma.$executeRaw`UPDATE "User" SET "isActive"=true,"updatedAt"=NOW() WHERE "email"=${admission.email}`;
       guardianCredentials = await this.guardianService.issueCredentialsForStudent(admission.email);
     }
-    await this.email.sendEmail(admission.email,`Admission ${body.status.toLowerCase()}`,`<p>Hello ${admission.name},</p><p>Your admission has been ${body.status.toLowerCase()}.</p><p>${body.adminNotes||""}</p>`);
-    return { success:true, guardianCredentials };
+    // The decision is already saved. A bounced email must not turn it into an error the admin cannot retry.
+    const approved = body.status === "APPROVED";
+    const loginLink = `${frontendBaseUrl()}/login`;
+    const mail = await this.email.trySend(
+      admission.email,
+      approved ? "Your SmartAcademy admission is approved" : "Update on your SmartAcademy admission",
+      approved
+        ? `<p>Hello ${escapeHtml(admission.name)},</p><p>Congratulations, your admission has been approved.</p>${body.adminNotes ? `<p>${escapeHtml(body.adminNotes)}</p>` : ""}<p>You can now sign in with the email and password you chose during registration:</p><p><a href="${loginLink}">${loginLink}</a></p>`
+        : `<p>Hello ${escapeHtml(admission.name)},</p><p>We are sorry, but your admission request was not approved.</p>${body.adminNotes ? `<p>${escapeHtml(body.adminNotes)}</p>` : ""}`,
+    );
+    return { success:true, guardianCredentials, emailSent: mail.sent, ...(mail.sent ? {} : { emailError: mail.reason }) };
   }
 
   private async get(id:string){const rows=await this.prisma.$queryRaw<Admission[]>`SELECT * FROM "StudentAdmission" WHERE "id"=${id} LIMIT 1`;if(!rows[0])throw new NotFoundException("Admission request not found");return rows[0];}
