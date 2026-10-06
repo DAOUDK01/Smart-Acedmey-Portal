@@ -3,7 +3,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ComponentProps } from "react";
 import { LecturePlayer, type LectureQuiz } from "../lecture-player";
 
-let gazeProps: { onPauseRequest?: () => void; onResumeRequest?: () => void } = {};
+let gazeProps: {
+  onPauseRequest?: () => void;
+  onResumeRequest?: () => void;
+  onUnavailable?: () => void;
+} = {};
 vi.mock("@/components/student/gaze-monitor", () => ({
   GazeMonitor: (props: typeof gazeProps) => {
     gazeProps = props;
@@ -204,5 +208,56 @@ describe("LecturePlayer quiz checkpoint", () => {
     const { playUntil } = setup({ answeredQuizIds: new Set(["q1"]) });
     playUntil(12);
     expect(screen.queryByRole("dialog", { name: "Lecture quiz" })).toBeNull();
+  });
+});
+
+describe("LecturePlayer gaze monitoring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    gazeProps = {};
+  });
+
+  it("pauses a playing video when the student looks away and resumes when they look back", () => {
+    const { video, playUntil } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Play lecture" }));
+    playUntil(3);
+
+    act(() => gazeProps.onPauseRequest?.());
+    expect(video.paused).toBe(true);
+
+    act(() => gazeProps.onResumeRequest?.());
+    expect(video.paused).toBe(false);
+  });
+
+  it("does not let the student start playback while looking away", () => {
+    const { video } = setup();
+    act(() => gazeProps.onPauseRequest?.());
+    (video.play as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Play lecture" }));
+    expect(video.play).not.toHaveBeenCalled();
+    expect(screen.getByText("Face the screen to play the lecture.")).toBeInTheDocument();
+
+    // Playback started some other way is stopped again.
+    fireEvent.play(video);
+    expect(video.paused).toBe(true);
+  });
+
+  it("does not start a video the student never played when they look back", () => {
+    const { video } = setup();
+    video.pause();
+    (video.play as unknown as ReturnType<typeof vi.fn>).mockClear();
+    act(() => gazeProps.onPauseRequest?.());
+    act(() => gazeProps.onResumeRequest?.());
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it("stops blocking playback when monitoring becomes unavailable", () => {
+    const { video } = setup();
+    act(() => gazeProps.onPauseRequest?.());
+    act(() => gazeProps.onUnavailable?.());
+
+    fireEvent.click(screen.getByRole("button", { name: "Play lecture" }));
+    expect(video.play).toHaveBeenCalled();
   });
 });

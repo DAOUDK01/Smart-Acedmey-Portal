@@ -39,8 +39,13 @@ interface GazeMonitorProps {
   active: boolean;
   onPauseRequest?: () => void;
   onResumeRequest?: () => void;
+  /** Monitoring could not start or stopped working (no camera, permission denied, model failure). */
+  onUnavailable?: () => void;
   className?: string;
 }
+
+// Consecutive failed frames before the landmarker is treated as broken (~1s at 30fps).
+const MAX_FRAME_ERRORS = 30;
 
 interface GazeMonitorState {
   phase: Phase;
@@ -152,6 +157,7 @@ function GazeMonitorInner({
   active,
   onPauseRequest,
   onResumeRequest,
+  onUnavailable,
   className,
 }: GazeMonitorProps) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -169,6 +175,11 @@ function GazeMonitorInner({
   const pausedRef = useRef(false);
   const stateRef = useRef<GazeState>("NO_FACE");
   const feedbackTimerRef = useRef<number | null>(null);
+  const frameErrorsRef = useRef(0);
+  const cpuFallbackTriedRef = useRef(false);
+  const recoveringRef = useRef(false);
+  const onUnavailableRef = useRef(onUnavailable);
+  onUnavailableRef.current = onUnavailable;
 
   const cleanup = useCallback(() => {
     if (rafRef.current) {
@@ -197,9 +208,44 @@ function GazeMonitorInner({
       setFeedback("unavailable");
       playToastSound("error");
       cleanup();
+      pausedRef.current = false;
+      onUnavailableRef.current?.();
     },
     [cleanup],
   );
+
+  // The landmarker loaded but fails on every frame (typically the GPU delegate): retry once on CPU,
+  // then give up visibly instead of silently reporting the student as focused.
+  const recoverFromFrameErrors = useCallback(async () => {
+    if (recoveringRef.current) return;
+    recoveringRef.current = true;
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    try {
+      landmarkerRef.current?.close();
+    } catch {}
+    landmarkerRef.current = null;
+
+    if (cpuFallbackTriedRef.current) {
+      recoveringRef.current = false;
+      disable("Detection error");
+      return;
+    }
+    cpuFallbackTriedRef.current = true;
+    const cpuLandmarker = await loadFaceLandmarker({ cpuOnly: true }).catch(() => null);
+    recoveringRef.current = false;
+    if (!cpuLandmarker) {
+      disable("Detection error");
+      return;
+    }
+    landmarkerRef.current = cpuLandmarker;
+    frameErrorsRef.current = 0;
+    // Re-enter the running phase so the detection loop restarts with the CPU landmarker.
+    setPhase("camera-active");
+    window.setTimeout(() => setPhase("running"), 0);
+  }, [disable]);
 
   const startDetectionLoop = useCallback(() => {
     const video = videoRef.current;
@@ -225,6 +271,7 @@ function GazeMonitorInner({
           result.faceBlendshapes,
           result.facialTransformationMatrixes?.[0],
         );
+        frameErrorsRef.current = 0;
         const newState = analyzerRef.current.update(
           sample,
           timestampRef.current,
@@ -255,12 +302,17 @@ function GazeMonitorInner({
           }
         }
       } catch {
-        // ignore frame errors
+        // A single bad frame is harmless; a long run means detection is not working at all.
+        frameErrorsRef.current += 1;
+        if (frameErrorsRef.current >= MAX_FRAME_ERRORS) {
+          void recoverFromFrameErrors();
+          return;
+        }
       }
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [active, phase, onPauseRequest, onResumeRequest]);
+  }, [active, phase, onPauseRequest, onResumeRequest, recoverFromFrameErrors]);
 
   useEffect(() => {
     if (!active) {
@@ -324,7 +376,10 @@ function GazeMonitorInner({
       setState("NO_FACE");
       stateRef.current = "NO_FACE";
       setFeedback(null);
-      analyzerRef.current.reset();
+      // Start from "no face" so playback stays blocked until a face is actually detected.
+      analyzerRef.current.reset("NO_FACE");
+      frameErrorsRef.current = 0;
+      cpuFallbackTriedRef.current = false;
       timestampRef.current = 0;
       pausedRef.current = false;
       window.setTimeout(() => {

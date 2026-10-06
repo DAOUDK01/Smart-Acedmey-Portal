@@ -5,6 +5,7 @@ import { Check, FileQuestion, Maximize, Minimize, Pause, Play, RotateCcw, Settin
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { GazeMonitor } from "@/components/student/gaze-monitor";
+import { formatClock } from "@/lib/transcript-segments";
 
 export type LectureQuiz = {
   id: string;
@@ -45,11 +46,9 @@ function getYouTubeId(url: string) {
   return match && match[2].length === 11 ? match[2] : null;
 }
 
-function formatTime(seconds: number) {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
+const formatTime = formatClock;
+
+const DIFFICULTY_RANK: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
 
 declare global {
   interface Window {
@@ -145,6 +144,10 @@ export function LecturePlayer({
   const answeredRef = useRef(answeredQuizIds);
   const currentQuizRef = useRef<LectureQuiz | null>(null);
   const sessionActiveRef = useRef(false);
+  // True while the gaze monitor reports the student looking away or off camera; playback is blocked.
+  const gazeAwayRef = useRef(false);
+  // Only auto-resume when it was the gaze monitor that paused a playing video.
+  const pausedByGazeRef = useRef(false);
   const onWatchProgressRef = useRef(onWatchProgress);
   onWatchProgressRef.current = onWatchProgress;
 
@@ -153,6 +156,7 @@ export function LecturePlayer({
   const [displayTime, setDisplayTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [seekWarning, setSeekWarning] = useState(false);
+  const [gazeBlockedNotice, setGazeBlockedNotice] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -215,9 +219,14 @@ export function LecturePlayer({
   }, [isYouTube]);
 
   const resumePlayback = useCallback(() => {
-    // A pending quiz must be answered first: the play button, gaze monitor and
-    // browser autoplay all route through here or the handlers below.
+    // A pending quiz must be answered first, and the student must be facing the screen: the play
+    // button, gaze monitor and browser autoplay all route through here or the handlers below.
     if (sessionActiveRef.current) return;
+    if (gazeAwayRef.current) {
+      setGazeBlockedNotice(true);
+      window.setTimeout(() => setGazeBlockedNotice(false), 2500);
+      return;
+    }
     if (isYouTube && playerRef.current?.playVideo) {
       playerRef.current.playVideo();
       setIsPlaying(true);
@@ -226,6 +235,36 @@ export function LecturePlayer({
       setIsPlaying(true);
     }
   }, [isYouTube]);
+
+  const isMediaPlaying = useCallback(
+    () =>
+      isYouTube
+        ? playerRef.current?.getPlayerState?.() === window.YT?.PlayerState.PLAYING
+        : Boolean(videoRef.current && !videoRef.current.paused),
+    [isYouTube],
+  );
+
+  const handleGazeAway = useCallback(() => {
+    gazeAwayRef.current = true;
+    if (isMediaPlaying()) {
+      pausedByGazeRef.current = true;
+      pausePlayback();
+    }
+  }, [isMediaPlaying, pausePlayback]);
+
+  const handleGazeFocused = useCallback(() => {
+    gazeAwayRef.current = false;
+    if (pausedByGazeRef.current) {
+      pausedByGazeRef.current = false;
+      resumePlayback();
+    }
+  }, [resumePlayback]);
+
+  // No camera, permission denied or model failure: monitoring is off, so it must not keep blocking.
+  const handleGazeUnavailable = useCallback(() => {
+    gazeAwayRef.current = false;
+    pausedByGazeRef.current = false;
+  }, []);
 
   const getCurrentTime = useCallback(() => {
     if (isYouTube && playerRef.current?.getCurrentTime) {
@@ -285,17 +324,18 @@ export function LecturePlayer({
         .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
       if (pending.length > 0 && !sessionActiveRef.current) {
-        const difficulty = pending[0].difficulty;
-        // Only questions the student has already reached: never quiz them on video they have not watched yet.
+        const checkpointTime = pending[0].timestamp;
+        // One pause per checkpoint: every unanswered question of that segment, easiest first.
         const group = quizzesRef.current
           .filter(
             (quiz) =>
-              quiz.difficulty === difficulty &&
-              quiz.timestamp !== undefined &&
-              quiz.timestamp <= currentTime &&
+              quiz.timestamp === checkpointTime &&
               !answeredRef.current.has(quiz.id),
           )
-          .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          .sort(
+            (a, b) =>
+              (DIFFICULTY_RANK[a.difficulty] ?? 1) - (DIFFICULTY_RANK[b.difficulty] ?? 1),
+          );
         sessionActiveRef.current = true;
         pausePlayback();
         setSessionQuizzes(group);
@@ -311,12 +351,10 @@ export function LecturePlayer({
     const currentTime = enforceProgressLock(getCurrentTime());
     checkQuizTriggers(currentTime);
 
-    // Safety net: if anything managed to start playback during a quiz, stop it again.
-    if (sessionActiveRef.current) {
-      const stillPlaying = isYouTube
-        ? playerRef.current?.getPlayerState?.() === window.YT?.PlayerState.PLAYING
-        : Boolean(videoRef.current && !videoRef.current.paused);
-      if (stillPlaying) pausePlayback();
+    // Safety net: if anything managed to start playback during a quiz or while the student is not
+    // facing the screen, stop it again.
+    if ((sessionActiveRef.current || gazeAwayRef.current) && isMediaPlaying()) {
+      pausePlayback();
     }
 
     let total = 0;
@@ -337,7 +375,7 @@ export function LecturePlayer({
         Math.min(100, (maxWatchedRef.current / total) * 100),
       );
     }
-  }, [checkQuizTriggers, enforceProgressLock, getCurrentTime, isYouTube, pausePlayback]);
+  }, [checkQuizTriggers, enforceProgressLock, getCurrentTime, isMediaPlaying, isYouTube, pausePlayback]);
 
   const handleTimeUpdate = () => {
     tickPlayback();
@@ -706,7 +744,7 @@ export function LecturePlayer({
                 }
               }}
               onPlay={() => {
-                if (sessionActiveRef.current) {
+                if (sessionActiveRef.current || gazeAwayRef.current) {
                   videoRef.current?.pause();
                   return;
                 }
@@ -853,9 +891,16 @@ export function LecturePlayer({
 
         <GazeMonitor
           active={isActive}
-          onPauseRequest={pausePlayback}
-          onResumeRequest={resumePlayback}
+          onPauseRequest={handleGazeAway}
+          onResumeRequest={handleGazeFocused}
+          onUnavailable={handleGazeUnavailable}
         />
+
+        {gazeBlockedNotice ? (
+          <div className="absolute left-1/2 top-16 z-30 -translate-x-1/2 rounded-xl border border-amber-400/50 bg-amber-950/90 px-4 py-2 text-xs font-semibold text-amber-100 shadow-lg">
+            Face the screen to play the lecture.
+          </div>
+        ) : null}
 
         <div className="absolute bottom-0 left-0 right-0 z-20 flex items-center gap-2 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-4 pb-4 pt-10 sm:gap-3">
           <button

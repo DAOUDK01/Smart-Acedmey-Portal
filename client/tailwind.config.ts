@@ -41,8 +41,9 @@ const config: Config = {
       },
       keyframes: {
         "shine-sweep": {
-          "0%": { transform: "translateX(-120%) skewX(-18deg)" },
-          "100%": { transform: "translateX(220%) skewX(-18deg)" },
+          "0%": { transform: "translateX(-100%)", opacity: "0" },
+          "15%, 85%": { opacity: "1" },
+          "100%": { transform: "translateX(100%)", opacity: "0" },
         },
         "float-slow": {
           "0%, 100%": { transform: "translateY(0) scale(1)" },

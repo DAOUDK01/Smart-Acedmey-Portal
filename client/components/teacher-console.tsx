@@ -6,6 +6,7 @@ import { PremiumCard } from "@/components/premium-card";
 import { Alert } from "@/components/ui/alert";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { toast } from "@/components/ui/toast";
 import { usePortalLock } from "@/lib/use-portal-lock";
@@ -44,7 +45,7 @@ import {
   splitTranscriptIntoSegments,
   type LectureSegment,
 } from "@/lib/transcript-segments";
-import { extractTranscriptFromFile } from "@/lib/auto-lecture";
+import { extractTranscriptFromFile, readMediaDurationSeconds } from "@/lib/auto-lecture";
 import { API_BASE_URL, apiFetch, authenticatedFetch } from "@/lib/api";
 
 function getYouTubeId(url: string) {
@@ -60,11 +61,7 @@ function getYouTubeThumbnail(url: string) {
   return id ? `https://img.youtube.com/vi/${id}/mqdefault.jpg` : null;
 }
 
-function formatTime(seconds: number) {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
+const formatTime = formatTimestampInput;
 
 type Course = {
   id: string;
@@ -217,13 +214,54 @@ function parseWeakTopics(value: unknown) {
   return [];
 }
 
+/** mm:ss field that lets the teacher type freely and only commits a parsed value on blur or Enter. */
+function CheckpointTimeInput({
+  seconds,
+  onCommit,
+}: {
+  seconds: number;
+  onCommit: (seconds: number) => void;
+}) {
+  const [draft, setDraft] = useState(formatTimestampInput(seconds));
+  useEffect(() => setDraft(formatTimestampInput(seconds)), [seconds]);
+
+  const commit = () => {
+    const parsed = parseTimestampInput(draft);
+    if (parsed > 0 && parsed !== seconds) onCommit(parsed);
+    else setDraft(formatTimestampInput(seconds));
+  };
+
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      placeholder="mm:ss"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+      }}
+      className="mt-2 px-3 py-2"
+    />
+  );
+}
+
 export function TeacherConsole() {
   const { ready, session, isApproved, maintenance } = usePortalLock("/teacher");
   const [activeTab, setActiveTab] = useState(() => getInitialTab("overview"));
-  useTabHistory(activeTab, setActiveTab);
+  // Tab the teacher tried to open while the Upload Lecture form had unsaved work; shows the leave dialog.
+  const [pendingTabChange, setPendingTabChange] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExtractingTranscript, setIsExtractingTranscript] = useState(false);
+  // Bumped to remount the native file picker, which is the only way to clear its selected file.
+  const [fileInputKey, setFileInputKey] = useState(0);
+  // Every question generated for the lecture being built; all of them are linked to it on save.
   const [pendingDraftQuizIds, setPendingDraftQuizIds] = useState<string[]>([]);
+  // Drafts already approved/rejected in Quiz Review (kept in pendingDraftQuizIds so they still get linked).
+  const [reviewedDraftQuizIds, setReviewedDraftQuizIds] = useState<string[]>([]);
+  // While true, Quiz Review shows only this lecture's freshly generated questions.
+  const [quizReviewDraftOnly, setQuizReviewDraftOnly] = useState(false);
 
   const [users, setUsers] = useState<User[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -249,6 +287,11 @@ export function TeacherConsole() {
   const [transcript, setTranscript] = useState("");
   const [questionCount, setQuestionCount] = useState(3);
   const [durationMinutes, setDurationMinutes] = useState(10);
+  // Exact length read from the uploaded file; null means the teacher-entered minutes are used.
+  const [videoDurationSeconds, setVideoDurationSeconds] = useState<number | null>(null);
+  const [isDetectingDuration, setIsDetectingDuration] = useState(false);
+  const [durationLookupFailed, setDurationLookupFailed] = useState(false);
+  const lectureDurationSeconds = videoDurationSeconds ?? durationMinutes * 60;
   const [lectureSegments, setLectureSegments] = useState<LectureSegment[]>([]);
   const segmentsTouchedRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -260,6 +303,8 @@ export function TeacherConsole() {
     "all" | "easy" | "medium" | "hard"
   >("all");
   const [quizFilterCourse, setQuizFilterCourse] = useState<string>("all");
+  const [quizFilterLecture, setQuizFilterLecture] = useState<string>("all");
+  const [quizFilterSegment, setQuizFilterSegment] = useState<string>("all");
 
   const [manualMockForm, setManualMockForm] = useState<ManualMockForm>({
     courseId: "",
@@ -409,24 +454,69 @@ export function TeacherConsole() {
     return () => window.clearInterval(interval);
   }, [ready, isApproved, lectures, refreshProcessingStatus]);
 
-  const pendingQuizzes = useMemo(
+  // Pending questions narrowed by course and lecture only, so the segment dropdown lists just the
+  // segments that exist for the current selection.
+  const pendingInScope = useMemo(
     () => publishedQuizzes.filter((quiz) => {
       if (!isQuizStatus(quiz.status, "pending")) return false;
+
+      if (quizFilterCourse !== "all") {
+        const lecture = lectures.find((l) => l.id === quiz.lectureId);
+        if (!lecture || lecture.courseId !== quizFilterCourse) return false;
+      }
+
+      if (quizFilterLecture !== "all" && quiz.lectureId !== quizFilterLecture) {
+        return false;
+      }
+
+      return true;
+    }),
+    [publishedQuizzes, quizFilterCourse, quizFilterLecture, lectures]
+  );
+
+  const quizFilterLectureOptions = useMemo(
+    () => lectures.filter(
+      (lecture) =>
+        (quizFilterCourse === "all" || lecture.courseId === quizFilterCourse) &&
+        publishedQuizzes.some(
+          (quiz) => quiz.lectureId === lecture.id && isQuizStatus(quiz.status, "pending"),
+        ),
+    ),
+    [lectures, publishedQuizzes, quizFilterCourse]
+  );
+
+  const quizFilterSegmentOptions = useMemo(
+    () => [...new Set(pendingInScope.map((quiz) => quiz.segment).filter((label): label is string => Boolean(label)))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [pendingInScope]
+  );
+
+  useEffect(() => {
+    if (quizFilterLecture !== "all" && !quizFilterLectureOptions.some((lecture) => lecture.id === quizFilterLecture)) {
+      setQuizFilterLecture("all");
+    }
+    if (quizFilterSegment !== "all" && !quizFilterSegmentOptions.includes(quizFilterSegment)) {
+      setQuizFilterSegment("all");
+    }
+  }, [quizFilterLecture, quizFilterLectureOptions, quizFilterSegment, quizFilterSegmentOptions]);
+
+  const pendingQuizzes = useMemo(
+    () => pendingInScope.filter((quiz) => {
+      if (quizReviewDraftOnly && !pendingDraftQuizIds.includes(quiz.id)) {
+        return false;
+      }
 
       if (quizFilterDifficulty !== "all" && quiz.difficulty !== quizFilterDifficulty) {
         return false;
       }
 
-      if (quizFilterCourse !== "all" && quiz.lectureId) {
-        const lecture = lectures.find((l) => l.id === quiz.lectureId);
-        if (!lecture || lecture.courseId !== quizFilterCourse) {
-          return false;
-        }
+      if (quizFilterSegment !== "all" && quiz.segment !== quizFilterSegment) {
+        return false;
       }
 
       return true;
     }),
-    [publishedQuizzes, quizFilterDifficulty, quizFilterCourse, lectures]
+    [pendingInScope, quizFilterDifficulty, quizFilterSegment, quizReviewDraftOnly, pendingDraftQuizIds]
   );
 
   const mockQuestions = useMemo(
@@ -512,13 +602,58 @@ export function TeacherConsole() {
       return;
     }
     setLectureSegments(
-      splitTranscriptIntoSegments(transcript, durationMinutes * 60, questionCount),
+      splitTranscriptIntoSegments(transcript, lectureDurationSeconds, questionCount),
     );
-  }, [transcript, durationMinutes, questionCount]);
+  }, [transcript, lectureDurationSeconds, questionCount]);
+
+  const applyDetectedDuration = (seconds: number) => {
+    setVideoDurationSeconds(seconds);
+    setDurationMinutes(Math.max(1, Math.round(seconds / 60)));
+  };
+
+  // Whenever the lecture's video changes (YouTube link typed or pasted, upload finished, lecture
+  // opened for editing), look up its real length so the teacher never has to enter it.
+  useEffect(() => {
+    const url = videoUrl.trim();
+    setDurationLookupFailed(false);
+    if (!url || (!getYouTubeId(url) && !url.startsWith("/uploads/"))) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setIsDetectingDuration(true);
+      void apiFetch<{ durationSeconds: number | null }>(
+        `/api/teacher/video-duration?url=${encodeURIComponent(url)}`,
+      )
+        .then((result) => {
+          if (cancelled) return;
+          if (Number(result?.durationSeconds) > 0) {
+            applyDetectedDuration(Number(result.durationSeconds));
+          } else {
+            setDurationLookupFailed(true);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setDurationLookupFailed(true);
+        })
+        .finally(() => {
+          if (!cancelled) setIsDetectingDuration(false);
+        });
+    }, 600);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      setIsDetectingDuration(false);
+    };
+  }, [videoUrl]);
 
   useEffect(() => {
     if (!selectedLectureFile || sourceMode !== "upload") return;
     let cancelled = false;
+    let detectedLocally = false;
+    void readMediaDurationSeconds(selectedLectureFile).then((seconds) => {
+      if (cancelled || !seconds) return;
+      detectedLocally = true;
+      applyDetectedDuration(seconds);
+    });
     setIsExtractingTranscript(true);
     void extractTranscriptFromFile(selectedLectureFile, API_BASE_URL).then((result) => {
       if (cancelled) return;
@@ -531,6 +666,8 @@ export function TeacherConsole() {
       }
       if (result.transcript) setTranscript(result.transcript);
       if (result.videoUrl) setVideoUrl(result.videoUrl);
+      // Server-side ffprobe covers formats the browser cannot decode (e.g. mkv, avi).
+      if (!detectedLocally && result.durationSeconds) applyDetectedDuration(result.durationSeconds);
     });
     return () => {
       cancelled = true;
@@ -563,6 +700,9 @@ export function TeacherConsole() {
         const data = await response.json();
         setTranscript(data.transcript || "");
         if (data.videoUrl) setVideoUrl(data.videoUrl);
+        if (!videoDurationSeconds && Number(data.durationSeconds) > 0) {
+          applyDetectedDuration(Number(data.durationSeconds));
+        }
       } else {
         const response = await authenticatedFetch("/api/teacher/transcribe", {
           method: "POST",
@@ -581,6 +721,10 @@ export function TeacherConsole() {
         setTranscript(data.transcript || "");
         if (data.videoUrl && !videoUrl) {
           setVideoUrl(data.videoUrl);
+        }
+        // YouTube length comes from the captions, replacing the 10-minute default.
+        if (Number(data.durationSeconds) > 0) {
+          applyDetectedDuration(Number(data.durationSeconds));
         }
       }
 
@@ -601,7 +745,7 @@ export function TeacherConsole() {
           topic: lectureTitle,
           transcript,
           questionCount: Math.max(lectureSegments.length, 1) * 3,
-          durationSeconds: durationMinutes * 60,
+          durationSeconds: lectureDurationSeconds,
           segments: lectureSegments,
         }),
       },
@@ -623,7 +767,11 @@ export function TeacherConsole() {
     setIsProcessing(true);
     try {
       const quizIds = await generateQuizForLecture();
+      // Regenerating replaces the previous unsaved drafts instead of leaving them as orphans.
+      await discardDraftQuizzes(pendingDraftQuizIds);
       setPendingDraftQuizIds(quizIds);
+      setReviewedDraftQuizIds([]);
+      setQuizReviewDraftOnly(true);
       await loadAll();
       showStatusMessage(
         "AI quiz generated. Review and approve each question in the Quiz Review tab.",
@@ -638,19 +786,85 @@ export function TeacherConsole() {
     }
   };
 
+  /** Deletes generated questions that were never linked to a saved lecture. */
+  const discardDraftQuizzes = async (quizIds: string[]) => {
+    await Promise.all(
+      quizIds.map((quizId) =>
+        apiFetch(`/api/admin/quiz/questions/${quizId}`, { method: "DELETE" }).catch(() => undefined),
+      ),
+    );
+  };
+
+  const hasUnsavedLecture = Boolean(
+    editingLectureId ||
+      lectureTitle.trim() ||
+      videoUrl.trim() ||
+      transcript.trim() ||
+      selectedLectureFile ||
+      pendingDraftQuizIds.length > 0,
+  );
+
+  // Leaving Upload Lecture with unsaved work asks first. Internal moves (e.g. to Quiz Review after
+  // generating) call setActiveTab directly and are not interrupted.
+  const requestTabChange = (tab: string) => {
+    if (activeTab === "upload" && tab !== "upload" && hasUnsavedLecture) {
+      setPendingTabChange(tab);
+      return;
+    }
+    setActiveTab(tab);
+  };
+  useTabHistory(activeTab, requestTabChange);
+
+  const handleStayOnUpload = () => {
+    setPendingTabChange(null);
+    // Browser Back already moved the URL; put it back on the upload tab.
+    window.history.pushState({ tab: "upload" }, "", `${window.location.pathname}?tab=upload`);
+  };
+
+  const handleKeepDraftAndLeave = () => {
+    const tab = pendingTabChange;
+    setPendingTabChange(null);
+    if (tab) setActiveTab(tab);
+  };
+
+  const handleDiscardAndLeave = async () => {
+    const tab = pendingTabChange;
+    setPendingTabChange(null);
+    await discardDraftQuizzes(pendingDraftQuizIds);
+    resetLectureForm();
+    if (tab) setActiveTab(tab);
+    await loadAll().catch(() => undefined);
+  };
+
+  // Closing or reloading the browser tab with unsaved lecture work shows the browser's own warning.
+  useEffect(() => {
+    if (!hasUnsavedLecture) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasUnsavedLecture]);
+
   const resetLectureForm = () => {
     setEditingLectureId(null);
     setSavedLecture(null);
     setPendingDraftQuizIds([]);
+    setReviewedDraftQuizIds([]);
+    setQuizReviewDraftOnly(false);
     segmentsTouchedRef.current = false;
     setCourseId("");
     setLectureTitle("");
     setSourceMode("link");
     setVideoUrl("");
     setSelectedLectureFile(null);
+    setFileInputKey((key) => key + 1);
+    setIsExtractingTranscript(false);
     setTranscript("");
     setQuestionCount(3);
     setDurationMinutes(10);
+    setVideoDurationSeconds(null);
     setLectureSegments([]);
   };
 
@@ -707,35 +921,30 @@ export function TeacherConsole() {
       const lectureId = editingLectureId ?? saved?.id;
       if (lectureId && pendingDraftQuizIds.length > 0) {
         await Promise.all(
-          pendingDraftQuizIds.map((quizId) =>
-            apiFetch(`/api/teacher/quizzes/${quizId}`, {
+          pendingDraftQuizIds.map((quizId) => {
+            // The player pauses at each question's own timestamp, so carry over any planner edits.
+            const segmentLabel = publishedQuizzes.find((quiz) => quiz.id === quizId)?.segment;
+            const timestamp = lectureSegments.find((segment) => segment.label === segmentLabel)?.timestamp;
+            return apiFetch(`/api/teacher/quizzes/${quizId}`, {
               method: "PATCH",
-              body: JSON.stringify({ lectureId }),
-            }),
-          ),
+              body: JSON.stringify(timestamp !== undefined ? { lectureId, timestamp } : { lectureId }),
+            });
+          }),
         );
       }
 
-      if (!editingLectureId && saved?.id) {
-        setSavedLecture({ id: saved.id, courseId, title: lectureTitle, videoUrl });
-        await loadAll();
-        resetLectureForm();
-        showStatusMessage(
-          "Lecture uploaded successfully. Manage it in the Manage Lectures tab.",
-        );
-        return;
-      }
-
-      await loadAll();
-      showStatusMessage(
-        editingLectureId
-          ? "Lecture updated successfully."
-          : "Lecture created successfully.",
-      );
+      // The lecture is saved, so clear the form right away; a failed refresh must not leave it filled in.
+      const wasEditing = Boolean(editingLectureId);
       resetLectureForm();
-      if (editingLectureId) {
+      showStatusMessage(
+        wasEditing
+          ? "Lecture updated successfully."
+          : "Lecture uploaded successfully. Manage it in the Manage Lectures tab.",
+      );
+      if (wasEditing) {
         setActiveTab("manage-lectures");
       }
+      await loadAll().catch(() => undefined);
     } catch {
       showErrorMessage("Failed to save lecture.");
     } finally {
@@ -750,19 +959,39 @@ export function TeacherConsole() {
     setVideoUrl(lecture.videoUrl);
     setTranscript(lecture.transcript ?? "");
     setDurationMinutes(lecture.durationMinutes ?? 10);
+    setVideoDurationSeconds(null);
     setSourceMode(getYouTubeId(lecture.videoUrl) ? "link" : "upload");
     const checkpoints = lecture.checkpoints ?? [];
     if (checkpoints.length > 0) {
       segmentsTouchedRef.current = true;
+      const lectureSeconds = (lecture.durationMinutes ?? 10) * 60;
+      const texts = splitTranscriptIntoSegments(
+        lecture.transcript ?? "",
+        lectureSeconds,
+        checkpoints.length,
+      );
       setLectureSegments(
         [...checkpoints]
           .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((checkpoint, index) => ({
-            label: checkpoint.title || `Segment ${index + 1}`,
-            timestamp: checkpoint.timestamp,
-            difficulty: (["easy", "medium", "hard"] as const)[Math.min(index, 2)],
-            text: "",
-          })),
+          .map((checkpoint, index) => {
+            // Checkpoints are stored as "Segment N Checkpoint"; quizzes are keyed by "Segment N".
+            const label = (checkpoint.title || `Segment ${index + 1}`).replace(/\s+Checkpoint$/i, "");
+            // Show where the video really pauses: the segment's quiz timestamp, when it has quizzes.
+            const quizTimestamp = publishedQuizzes.find(
+              (quiz) => quiz.lectureId === lecture.id && quiz.segment === label && typeof quiz.timestamp === "number",
+            )?.timestamp;
+            // Lectures saved before the caption-unit fix can hold times far past the video's end.
+            const timestamp =
+              [quizTimestamp, checkpoint.timestamp, texts[index]?.timestamp].find(
+                (value): value is number => typeof value === "number" && value > 0 && value <= lectureSeconds,
+              ) ?? checkpoint.timestamp;
+            return {
+              label,
+              timestamp,
+              difficulty: (["easy", "medium", "hard"] as const)[index % 3],
+              text: texts[index]?.text ?? "",
+            };
+          }),
       );
     } else {
       segmentsTouchedRef.current = false;
@@ -818,14 +1047,14 @@ export function TeacherConsole() {
           : "Quiz rejected successfully.",
       );
       if (activeTab === "quizzes" && pendingDraftQuizIds.includes(quizId)) {
-        if (pendingDraftQuizIds.length === 1) {
-          setPendingDraftQuizIds([]);
+        const reviewed = [...new Set([...reviewedDraftQuizIds, quizId])];
+        setReviewedDraftQuizIds(reviewed);
+        if (pendingDraftQuizIds.every((id) => reviewed.includes(id))) {
+          setQuizReviewDraftOnly(false);
           setActiveTab("upload");
           showStatusMessage(
             "All quiz questions reviewed. Save & upload the lecture to link them.",
           );
-        } else {
-          setPendingDraftQuizIds((prev) => prev.filter((id) => id !== quizId));
         }
       }
     } catch {
@@ -1091,11 +1320,51 @@ export function TeacherConsole() {
       title={`Welcome back, ${session?.name || "Teacher"}`}
       subtitle="Manage lecture delivery, build mock exams, and track every learner."
       activeTab={activeTab}
-      onTabChange={setActiveTab}
+      onTabChange={requestTabChange}
       session={session ?? undefined}
     >
       <div className="flex flex-col gap-6">
         <PendingApprovalBanner roleLabel="teacher" isApproved={isApproved} />
+
+        {pendingTabChange ? (
+          <Dialog
+            label="Leave Upload Lecture?"
+            onClose={handleStayOnUpload}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+          >
+            <div className="w-full max-w-md rounded-2xl border border-accent-purple/15 bg-ink-900 p-6 shadow-2xl">
+              <div className="mb-3 flex items-start justify-between gap-4">
+                <h2 className="text-lg font-bold text-white">Leave Upload Lecture?</h2>
+                <button
+                  type="button"
+                  onClick={handleStayOnUpload}
+                  aria-label="Close dialog"
+                  className="rounded-lg px-2 py-1 text-slate-500 hover:text-rose-600"
+                >
+                  ×
+                </button>
+              </div>
+              <p className="text-sm leading-relaxed text-slate-600">
+                {editingLectureId ? "Your changes to this lecture are" : "This lecture is"} not saved yet
+                {pendingDraftQuizIds.length > 0
+                  ? `, and its ${pendingDraftQuizIds.length} generated quiz question${pendingDraftQuizIds.length > 1 ? "s are" : " is"} not linked to it`
+                  : ""}
+                . You can keep it as a draft and come back, or discard it.
+              </p>
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row-reverse">
+                <Button type="button" variant="primary" size="sm" onClick={handleStayOnUpload}>
+                  Stay and finish
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={handleKeepDraftAndLeave}>
+                  Keep draft & leave
+                </Button>
+                <Button type="button" variant="danger" size="sm" onClick={() => void handleDiscardAndLeave()}>
+                  Discard
+                </Button>
+              </div>
+            </div>
+          </Dialog>
+        ) : null}
 
         {activeTab === "overview" ? (
           <>
@@ -1226,9 +1495,26 @@ export function TeacherConsole() {
                       type="number"
                       min={1}
                       value={durationMinutes}
-                      onChange={(event) => setDurationMinutes(Number(event.target.value) || 10)}
+                      onChange={(event) => {
+                        setVideoDurationSeconds(null);
+                        setDurationMinutes(Number(event.target.value) || 10);
+                      }}
                       className="mt-2"
                     />
+                    {isDetectingDuration ? (
+                      <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent-purple">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Detecting video length...
+                      </p>
+                    ) : videoDurationSeconds ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Detected from video: {formatTimestampInput(videoDurationSeconds)}
+                      </p>
+                    ) : durationLookupFailed ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Could not read the video length; enter it manually.
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -1282,6 +1568,7 @@ export function TeacherConsole() {
                 ) : (
                   <div className="relative">
                     <input
+                      key={fileInputKey}
                       type="file"
                       accept="video/*"
                       className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
@@ -1427,20 +1714,29 @@ export function TeacherConsole() {
                             <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                               Checkpoint Time (mm:ss)
                             </label>
-                            <Input
-                              type="text"
-                              value={formatTimestampInput(segment.timestamp)}
-                              onChange={(event) => {
+                            <CheckpointTimeInput
+                              seconds={segment.timestamp}
+                              onCommit={(seconds) => {
                                 segmentsTouchedRef.current = true;
                                 const next = [...lectureSegments];
-                                next[index] = {
-                                  ...segment,
-                                  timestamp: parseTimestampInput(event.target.value),
-                                };
+                                next[index] = { ...segment, timestamp: seconds };
                                 setLectureSegments(next);
                               }}
-                              className="mt-2 px-3 py-2"
                             />
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              Covers {formatTimestampInput(index === 0 ? 0 : lectureSegments[index - 1].timestamp)}
+                              {" – "}
+                              {formatTimestampInput(segment.timestamp)}
+                            </p>
+                            {segment.timestamp > lectureDurationSeconds ? (
+                              <p className="mt-1 text-[11px] text-rose-500">
+                                After the end of the video ({formatTimestampInput(lectureDurationSeconds)}).
+                              </p>
+                            ) : index > 0 && segment.timestamp <= lectureSegments[index - 1].timestamp ? (
+                              <p className="mt-1 text-[11px] text-rose-500">
+                                Must be later than the previous checkpoint.
+                              </p>
+                            ) : null}
                           </div>
                           <div>
                             <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
@@ -1471,7 +1767,6 @@ export function TeacherConsole() {
                             <p className="mt-2 text-sm font-semibold text-white">{segment.label}</p>
                           </div>
                         </div>
-                        <p className="mt-3 text-xs leading-relaxed text-slate-400">{segment.text}</p>
                       </div>
                     ))}
                   </div>
@@ -1681,10 +1976,78 @@ export function TeacherConsole() {
             title="Pending Quiz Reviews"
             description="Approve or reject AI-generated questions before they reach students."
           >
-            <div className="mb-6 flex flex-wrap items-center gap-4">
-              <div className="flex-1 min-w-[200px]">
+            {quizReviewDraftOnly ? (
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent-purple/20 bg-accent-purple/[0.06] px-4 py-3">
+                <p className="text-sm text-slate-600">
+                  Showing only the questions generated for{" "}
+                  <span className="font-semibold text-white">{lectureTitle || "this lecture"}</span>.
+                </p>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setQuizReviewDraftOnly(false)}>
+                    Show all pending quizzes
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setActiveTab("upload")}>
+                    Back to lecture
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
-                  Filter by Difficulty
+                  Course / Subject
+                </label>
+                <Select
+                  value={quizFilterCourse}
+                  onChange={(e) => {
+                    setQuizFilterCourse(e.target.value);
+                    setQuizFilterLecture("all");
+                    setQuizFilterSegment("all");
+                  }}
+                >
+                  <option value="all">All Courses</option>
+                  {courses.map((course) => (
+                    <option key={course.id} value={course.id}>{course.title}</option>
+                  ))}
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+                  Lecture
+                </label>
+                <Select
+                  value={quizFilterLecture}
+                  onChange={(e) => {
+                    setQuizFilterLecture(e.target.value);
+                    setQuizFilterSegment("all");
+                  }}
+                >
+                  <option value="all">All Lectures</option>
+                  {quizFilterLectureOptions.map((lecture) => (
+                    <option key={lecture.id} value={lecture.id}>{lecture.title}</option>
+                  ))}
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+                  Segment
+                </label>
+                <Select
+                  value={quizFilterSegment}
+                  onChange={(e) => setQuizFilterSegment(e.target.value)}
+                >
+                  <option value="all">All Segments</option>
+                  {quizFilterSegmentOptions.map((label) => (
+                    <option key={label} value={label}>{label}</option>
+                  ))}
+                </Select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+                  Difficulty
                 </label>
                 <Select
                   value={quizFilterDifficulty}
@@ -1694,21 +2057,6 @@ export function TeacherConsole() {
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
-                </Select>
-              </div>
-
-              <div className="flex-1 min-w-[200px]">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
-                  Filter by Course
-                </label>
-                <Select
-                  value={quizFilterCourse}
-                  onChange={(e) => setQuizFilterCourse(e.target.value)}
-                >
-                  <option value="all">All Courses</option>
-                  {courses.map((course) => (
-                    <option key={course.id} value={course.id}>{course.title}</option>
-                  ))}
                 </Select>
               </div>
             </div>
@@ -1722,8 +2070,25 @@ export function TeacherConsole() {
                   list.push(quiz);
                   groups.set(key, list);
                 }
-                return [...groups.entries()].map(([key, quizzes]) => {
+                const difficultyRank: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
+                const lectureTitle = (id?: string) => lectures.find((l) => l.id === id)?.title ?? "";
+                // Lecture by lecture, segments in playback order, questions easiest first.
+                const ordered = [...groups.entries()]
+                  .map(([key, list]) => [
+                    key,
+                    [...list].sort((a, b) => (difficultyRank[a.difficulty] ?? 1) - (difficultyRank[b.difficulty] ?? 1)),
+                  ] as const)
+                  .sort(([, a], [, b]) =>
+                    lectureTitle(a[0].lectureId).localeCompare(lectureTitle(b[0].lectureId)) ||
+                    (a[0].timestamp ?? 0) - (b[0].timestamp ?? 0),
+                  );
+                return ordered.map(([key, quizzes]) => {
                   const first = quizzes[0];
+                  const difficultySummary = (["easy", "medium", "hard"] as const)
+                    .map((level) => [level, quizzes.filter((quiz) => quiz.difficulty === level).length] as const)
+                    .filter(([, count]) => count > 0)
+                    .map(([level, count]) => `${count} ${level}`)
+                    .join(" · ");
                   const lecture = first.lectureId ? lectures.find((l) => l.id === first.lectureId) : null;
                   const course = lecture ? courses.find((c) => c.id === lecture.courseId) : null;
 
@@ -1742,6 +2107,9 @@ export function TeacherConsole() {
                           ) : null}
                           <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-cyan-600">
                             {quizzes.length} question{quizzes.length > 1 ? "s" : ""}
+                          </span>
+                          <span className="rounded-full bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-600">
+                            {difficultySummary}
                           </span>
                           {lecture ? (
                             <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-600">{lecture.title}</span>

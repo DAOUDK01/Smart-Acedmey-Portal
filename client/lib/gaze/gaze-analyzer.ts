@@ -90,8 +90,9 @@ export class GazeAnalyzer {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  reset(): void {
-    this.state = "FOCUSED";
+  /** `initialState` lets a fresh camera session start from "no face" until a face is actually seen. */
+  reset(initialState: GazeState = "FOCUSED"): void {
+    this.state = initialState;
     this.candidateState = null;
     this.candidateSince = 0;
     this.lastUpdateMs = 0;
