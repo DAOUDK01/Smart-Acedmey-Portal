@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UseInterceptors,
@@ -154,6 +155,13 @@ export class GuardianProgressController {
 export class TeacherContentController {
   constructor(private readonly contentService: ContentService) {}
 
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @Get("video-duration")
+  async videoDuration(@Query("url") url?: string) {
+    if (!url?.trim()) throw new BadRequestException("url is required");
+    return { durationSeconds: await this.contentService.detectVideoDurationSeconds(url) };
+  }
+
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Post("transcribe")
   @UseInterceptors(
@@ -196,12 +204,12 @@ export class TeacherContentController {
     const uploadedUrl = file ? `/uploads/${file.filename}` : undefined;
     const videoUrl = uploadedUrl || body.videoUrl?.trim() || title;
 
-    const transcript = await this.contentService.generateTranscriptForVideo(
+    const { transcript, durationSeconds } = await this.contentService.transcribeWithDuration(
       title,
       videoUrl,
       file?.path,
     );
 
-    return { transcript, videoUrl };
+    return { transcript, videoUrl, durationSeconds };
   }
 }

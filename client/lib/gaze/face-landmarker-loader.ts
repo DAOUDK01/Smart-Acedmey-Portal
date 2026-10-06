@@ -78,8 +78,14 @@ async function tryLoad(wasmPath: string, modelPath: string, delegate: "GPU" | "C
   }
 }
 
-export async function loadFaceLandmarker(): Promise<FaceLandmarkerLike | null> {
-  const attempts = [
+/**
+ * `cpuOnly` skips the GPU delegate: on some machines the GPU landmarker is created fine but then
+ * fails on every frame, so the monitor retries on CPU when that happens.
+ */
+export async function loadFaceLandmarker(
+  options: { cpuOnly?: boolean } = {},
+): Promise<FaceLandmarkerLike | null> {
+  const allAttempts = [
     { wasm: LOCAL_WASM, model: LOCAL_MODEL, delegate: "GPU" as const },
     { wasm: LOCAL_WASM, model: LOCAL_MODEL, delegate: "CPU" as const },
     { wasm: CDN_WASM, model: LOCAL_MODEL, delegate: "GPU" as const },
@@ -89,6 +95,9 @@ export async function loadFaceLandmarker(): Promise<FaceLandmarkerLike | null> {
     { wasm: CDN_WASM, model: CDN_MODEL, delegate: "GPU" as const },
     { wasm: CDN_WASM, model: CDN_MODEL, delegate: "CPU" as const },
   ];
+  const attempts = options.cpuOnly
+    ? allAttempts.filter((attempt) => attempt.delegate === "CPU")
+    : allAttempts;
 
   for (const a of attempts) {
     const lm = await tryLoad(a.wasm, a.model, a.delegate);

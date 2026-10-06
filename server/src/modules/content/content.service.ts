@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "crypto";
-import { join } from "path";
+import { join, resolve, sep } from "path";
 import { existsSync, rmSync } from "fs";
 import { PrismaService } from "../../prisma.service";
 import { HlsProcessingService } from "./hls-processing.service";
@@ -94,6 +94,46 @@ export class ContentService {
       }));
   }
 
+  /** Transcript plus the real video length: probed from an uploaded file, or taken from YouTube captions. */
+  async transcribeWithDuration(
+    title: string,
+    videoUrl: string,
+    filePath?: string,
+  ): Promise<{ transcript: string; durationSeconds: number | null }> {
+    if (!filePath && this.isYouTubeUrl(videoUrl)) {
+      const captions = await this.transcription.transcribeYouTube(videoUrl);
+      if (captions?.transcript.trim()) {
+        return { transcript: captions.transcript.trim(), durationSeconds: captions.durationSeconds ?? null };
+      }
+    }
+
+    const [transcript, durationSeconds] = await Promise.all([
+      this.generateTranscriptForVideo(title, videoUrl, filePath),
+      filePath ? this.transcription.mediaDurationSeconds(filePath) : null,
+    ]);
+    return { transcript, durationSeconds };
+  }
+
+  /** Real length of a lecture video: YouTube links via their watch page, uploads via ffprobe. */
+  async detectVideoDurationSeconds(videoUrl: string): Promise<number | null> {
+    const url = videoUrl.trim();
+    if (this.isYouTubeUrl(url)) {
+      return this.transcription.youTubeDurationSeconds(url);
+    }
+    if (url.startsWith("/uploads/")) {
+      // The path comes from the client, so it must stay inside the uploads folder.
+      const uploadsDir = resolve(process.cwd(), "uploads");
+      const sourcePath = resolve(uploadsDir, url.replace(/^\/uploads\//, ""));
+      if (!sourcePath.startsWith(uploadsDir + sep) || !existsSync(sourcePath)) return null;
+      return this.transcription.mediaDurationSeconds(sourcePath);
+    }
+    return null;
+  }
+
+  private isYouTubeUrl(videoUrl: string) {
+    return videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be");
+  }
+
   async generateTranscriptForVideo(
     title: string,
     videoUrl: string,
@@ -104,9 +144,9 @@ export class ContentService {
       if (realTranscript?.trim()) return realTranscript.trim();
     }
 
-    if (videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be")) {
-      const realTranscript = await this.transcription.transcribeYouTube(videoUrl);
-      if (realTranscript?.trim()) return realTranscript.trim();
+    if (this.isYouTubeUrl(videoUrl)) {
+      const captions = await this.transcription.transcribeYouTube(videoUrl);
+      if (captions?.transcript.trim()) return captions.transcript.trim();
     }
 
     const prompt = `You are an AI video transcriber. Generate a realistic lecture transcript for "${title}".
@@ -322,6 +362,16 @@ Return ONLY the transcript text without headings or markdown.`;
             data: { lectureId: id, ...data },
           });
         }
+        // The student player pauses at each question's own timestamp, so keep it in step with the planner.
+        await this.prisma.quizQuestion.updateMany({
+          where: { lectureId: id, topic: { startsWith: `${segment.label}|` } },
+          data: { timestamp: segment.timestamp },
+        });
+      }
+
+      const stale = existing.slice(segments.length).map((checkpoint) => checkpoint.id);
+      if (stale.length > 0) {
+        await this.prisma.checkpoint.deleteMany({ where: { id: { in: stale } } });
       }
     }
 

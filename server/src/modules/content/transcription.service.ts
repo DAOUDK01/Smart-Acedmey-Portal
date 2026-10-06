@@ -60,23 +60,44 @@ export class TranscriptionService {
     }
   }
 
-  /** Fetches the real captions of a YouTube video. */
-  async transcribeYouTube(videoUrl: string): Promise<string | null> {
+  /**
+   * Fetches the real captions of a YouTube video, plus the video length implied by the last caption
+   * (YouTube links have no file to probe).
+   */
+  async transcribeYouTube(
+    videoUrl: string,
+  ): Promise<{ transcript: string; durationSeconds?: number } | null> {
     const id = this.extractYouTubeId(videoUrl);
     if (!id) return null;
 
     try {
       const captions = await fetchTranscript(id);
+      // youtube-transcript reports offset/duration in milliseconds for the srv3 caption format but in
+      // seconds for the classic one. Caption lines last a few seconds, so a median duration above 60
+      // can only be milliseconds.
+      const durations = captions
+        .map((line) => Number(line.duration) || 0)
+        .sort((a, b) => a - b);
+      const toSeconds = (durations[Math.floor(durations.length / 2)] ?? 0) > 60 ? 1 / 1000 : 1;
+
       const lines = captions
         .map((line) => ({
           text: this.cleanCaptionText(line.text),
-          start: Number(line.offset) || 0,
+          start: (Number(line.offset) || 0) * toSeconds,
         }))
         .filter((line) => line.text.length > 0);
 
       if (lines.length === 0) return null;
       this.logger.log(`Fetched YouTube captions (${lines.length} lines)`);
-      return this.buildStructuredTranscript(lines);
+
+      const last = captions[captions.length - 1];
+      const endSeconds = Math.round(
+        ((Number(last?.offset) || 0) + (Number(last?.duration) || 0)) * toSeconds,
+      );
+      return {
+        transcript: this.buildStructuredTranscript(lines),
+        durationSeconds: endSeconds > 0 ? endSeconds : undefined,
+      };
     } catch (error) {
       this.logger.warn(`YouTube transcript fetch failed: ${(error as Error).message}`);
       return null;
@@ -166,6 +187,46 @@ export class TranscriptionService {
       rmSync(dir, { recursive: true, force: true });
       return null;
     }
+  }
+
+  /**
+   * Length of a YouTube video in seconds, read from the public watch page (no API key needed).
+   * Falls back to the end of the last caption when the page cannot be read.
+   */
+  async youTubeDurationSeconds(videoUrl: string): Promise<number | null> {
+    const id = this.extractYouTubeId(videoUrl);
+    if (!id) return null;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(`https://www.youtube.com/watch?v=${id}`, {
+        signal: controller.signal,
+        headers: {
+          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        },
+      });
+      if (response.ok) {
+        const page = await response.text();
+        const seconds = Number(page.match(/"lengthSeconds":"(\d+)"/)?.[1]);
+        if (seconds > 0) return seconds;
+      }
+    } catch (error) {
+      this.logger.warn(`YouTube duration lookup failed: ${(error as Error).message}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const captions = await this.transcribeYouTube(videoUrl);
+    return captions?.durationSeconds ?? null;
+  }
+
+  /** Length of an audio or video file in whole seconds, or null when ffprobe cannot read it. */
+  async mediaDurationSeconds(filePath: string): Promise<number | null> {
+    const durationMs = await this.audioDurationMs(filePath);
+    return durationMs ? Math.round(durationMs / 1000) : null;
   }
 
   private async audioDurationMs(audioPath: string): Promise<number | null> {

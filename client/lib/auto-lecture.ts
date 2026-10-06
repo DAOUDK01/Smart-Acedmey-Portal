@@ -28,10 +28,30 @@ export async function extractTranscriptFromUrl(
   }
 }
 
+/** Reads a local video/audio file's length from its metadata; null if the browser cannot decode it. */
+export function readMediaDurationSeconds(file: File): Promise<number | null> {
+  if (typeof window === "undefined") return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const media = document.createElement(file.type.startsWith("audio/") ? "audio" : "video");
+    const finish = (value: number | null) => {
+      URL.revokeObjectURL(objectUrl);
+      media.removeAttribute("src");
+      resolve(value);
+    };
+    media.preload = "metadata";
+    media.onloadedmetadata = () =>
+      finish(Number.isFinite(media.duration) && media.duration > 0 ? Math.round(media.duration) : null);
+    media.onerror = () => finish(null);
+    media.src = objectUrl;
+  });
+}
+
 export async function extractTranscriptFromFile(
   file: File,
   apiBase = "http://localhost:4010",
-): Promise<{ transcript: string; videoUrl?: string } | null> {
+): Promise<{ transcript: string; videoUrl?: string; durationSeconds?: number } | null> {
   if (typeof window === "undefined") return null;
 
   const name = file.name.toLowerCase();
@@ -59,6 +79,7 @@ export async function extractTranscriptFromFile(
       return {
         transcript: String(payload?.transcript || "").trim(),
         videoUrl: payload?.videoUrl,
+        durationSeconds: Number(payload?.durationSeconds) > 0 ? Number(payload.durationSeconds) : undefined,
       };
     }
   } catch {
