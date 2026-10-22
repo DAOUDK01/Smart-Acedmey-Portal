@@ -42,9 +42,9 @@
   },
   "scripts": {
     "postinstall": "prisma generate",
-    "start": "nest start",
-    "start:prod": "node dist/main.js",
-    "start:dev": "nest start --watch",
+    "start": "node api.js && nest start",
+    "start:prod": "node api.js && node dist/main.js",
+    "start:dev": "node api.js && nest start --watch",
     "db:deploy": "prisma migrate deploy",
     "test:key-client": "ts-node scripts/test-key-client.ts",
     "test": "jest",

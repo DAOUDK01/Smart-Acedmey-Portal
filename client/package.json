@@ -28,9 +28,9 @@
     "vitest": "^4.1.11"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node api.js && next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node api.js && next start",
     "lint": "next lint"
   }
 }
