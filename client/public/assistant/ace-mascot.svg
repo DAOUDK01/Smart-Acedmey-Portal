@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 220" width="200" height="220" role="img" aria-labelledby="ace-title">
+  <title id="ace-title">Ace, the Smart Academy learning robot</title>
+  <defs>
+    <linearGradient id="shell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6F0FF"/>
+    </linearGradient>
+    <linearGradient id="visor" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1E3A8A"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="0.45" cy="0.4" r="0.65">
+      <stop offset="0" stop-color="#7DD3FC"/>
+      <stop offset="0.55" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#0284C7"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <radialGradient id="bulb" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#E0F2FE"/>
+      <stop offset="0.5" stop-color="#7DD3FC"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </radialGradient>
+    <style>
+      .blink { transform-box: fill-box; transform-origin: center; animation: blink 5.5s ease-in-out infinite; }
+      .wave { transform-box: fill-box; transform-origin: 20% 85%; animation: wave 7s ease-in-out infinite; }
+      .glow { animation: glow 2.6s ease-in-out infinite; }
+      .heart { animation: glow 3.2s ease-in-out infinite; }
+      @keyframes blink { 0%, 93%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.08); } }
+      @keyframes wave {
+        0%, 70%, 100% { transform: rotate(0deg); }
+        76% { transform: rotate(-26deg); }
+        82% { transform: rotate(8deg); }
+        88% { transform: rotate(-22deg); }
+        94% { transform: rotate(4deg); }
+      }
+      @keyframes glow { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+      @media (prefers-reduced-motion: reduce) {
+        .blink, .wave, .glow, .heart { animation: none; }
+      }
+    </style>
+  </defs>
+
+  <!-- ground shadow -->
+  <ellipse cx="100" cy="212" rx="46" ry="6" fill="#1E3A8A" opacity="0.12"/>
+
+  <!-- antenna -->
+  <path d="M100 40 V22" stroke="#93C5FD" stroke-width="5" stroke-linecap="round"/>
+  <circle class="glow" cx="100" cy="16" r="9" fill="url(#bulb)" stroke="#BAE6FD" stroke-width="2"/>
+  <circle cx="97" cy="13" r="2.6" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- feet -->
+  <rect x="68" y="190" width="26" height="16" rx="8" fill="url(#accent)"/>
+  <rect x="106" y="190" width="26" height="16" rx="8" fill="url(#accent)"/>
+
+  <!-- left arm (resting) -->
+  <g transform="rotate(16 52 150)">
+    <rect x="40" y="138" width="22" height="40" rx="11" fill="url(#shell)" stroke="#BFDBFE" stroke-width="3"/>
+    <circle cx="51" cy="180" r="8" fill="url(#accent)"/>
+  </g>
+
+  <!-- right arm (waves now and then) -->
+  <g class="wave">
+    <g transform="rotate(-16 148 150)">
+      <rect x="138" y="138" width="22" height="40" rx="11" fill="url(#shell)" stroke="#BFDBFE" stroke-width="3"/>
+      <circle cx="149" cy="180" r="8" fill="url(#accent)"/>
+    </g>
+  </g>
+
+  <!-- body -->
+  <rect x="58" y="128" width="84" height="68" rx="32" fill="url(#shell)" stroke="#BFDBFE" stroke-width="3"/>
+  <!-- chest badge: open book -->
+  <rect x="82" y="146" width="36" height="30" rx="12" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="2"/>
+  <path class="heart" d="M100 156 C94 152 88 152 86 153 V168 C88 167 94 167 100 171 C106 167 112 167 114 168 V153 C112 152 106 152 100 156 Z" fill="url(#accent)"/>
+  <path d="M100 156 V171" stroke="#EFF6FF" stroke-width="2"/>
+
+  <!-- ears -->
+  <rect x="20" y="70" width="18" height="38" rx="9" fill="url(#accent)"/>
+  <rect x="162" y="70" width="18" height="38" rx="9" fill="url(#accent)"/>
+
+  <!-- head -->
+  <rect x="32" y="40" width="136" height="98" rx="46" fill="url(#shell)" stroke="#BFDBFE" stroke-width="3"/>
+  <ellipse cx="74" cy="56" rx="22" ry="7" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- face visor -->
+  <rect x="48" y="58" width="104" height="64" rx="30" fill="url(#visor)"/>
+
+  <!-- eyes -->
+  <g class="blink">
+    <ellipse cx="78" cy="87" rx="15" ry="17" fill="url(#eye)"/>
+    <ellipse cx="122" cy="87" rx="15" ry="17" fill="url(#eye)"/>
+    <circle cx="80" cy="89" r="7" fill="#0C4A6E"/>
+    <circle cx="124" cy="89" r="7" fill="#0C4A6E"/>
+    <circle cx="73" cy="80" r="5" fill="#FFFFFF"/>
+    <circle cx="117" cy="80" r="5" fill="#FFFFFF"/>
+    <circle cx="84" cy="94" r="2" fill="#FFFFFF" opacity="0.8"/>
+    <circle cx="128" cy="94" r="2" fill="#FFFFFF" opacity="0.8"/>
+  </g>
+
+  <!-- smile and cheeks -->
+  <path d="M88 108 Q100 117 112 108" fill="none" stroke="#7DD3FC" stroke-width="4.5" stroke-linecap="round"/>
+  <ellipse cx="62" cy="106" rx="6" ry="4" fill="#F9A8D4" opacity="0.6"/>
+  <ellipse cx="138" cy="106" rx="6" ry="4" fill="#F9A8D4" opacity="0.6"/>
+</svg>

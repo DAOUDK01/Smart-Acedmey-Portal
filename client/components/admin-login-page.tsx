@@ -7,6 +7,7 @@ import { LockKeyhole, ShieldCheck } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SignInProgress, type SignInPhase } from "@/components/ui/sign-in-progress";
 import { API_BASE_URL } from "@/lib/api";
 import { useMaintenance } from "@/lib/use-maintenance";
 import {
@@ -21,12 +22,13 @@ export function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [phase, setPhase] = useState<SignInPhase>("idle");
+  const submitting = phase !== "idle";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    setSubmitting(true);
+    setPhase("verifying");
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/admin/login`, {
@@ -48,6 +50,8 @@ export function AdminLoginPage() {
         isActive: true,
         mode: "real",
       });
+      // Stays in the success state until the admin portal replaces this page.
+      setPhase("success");
       router.replace("/admin");
     } catch (loginError) {
       setError(
@@ -55,8 +59,7 @@ export function AdminLoginPage() {
           ? loginError.message
           : "Unable to sign in to the admin portal",
       );
-    } finally {
-      setSubmitting(false);
+      setPhase("idle");
     }
   }
 
@@ -128,8 +131,12 @@ export function AdminLoginPage() {
             </div>
             {error ? <Alert variant="error">{error}</Alert> : null}
             <Button type="submit" fullWidth disabled={submitting}>
-              {submitting ? "Verifying access..." : "Enter admin portal"}
+              {phase === "success" ? "Signed in" : submitting ? "Verifying access..." : "Enter admin portal"}
             </Button>
+            <SignInProgress
+              phase={phase}
+              successMessage="Signed in successfully. Opening the admin portal..."
+            />
           </form>
 
           <div className="mt-8 border-t border-accent-purple/15 pt-6 text-center text-sm text-slate-500">

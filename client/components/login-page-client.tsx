@@ -6,6 +6,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel } from "@/components/ui/panel";
+import { SignInProgress, type SignInPhase } from "@/components/ui/sign-in-progress";
 import { getDashboardPath,
   savePortalSession,
   saveAccessToken,
@@ -31,7 +32,9 @@ export function LoginPageClient() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | undefined>(undefined);
+  const [phase, setPhase] = useState<SignInPhase>("idle");
+  const isSubmitting = phase !== "idle";
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -47,7 +50,7 @@ export function LoginPageClient() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus(null);
-    setIsSubmitting(true);
+    setPhase("verifying");
 
     try {
       if (!password.trim()) {
@@ -84,11 +87,14 @@ export function LoginPageClient() {
 
       if (!matchedUser.isActive && matchedUser.role !== "ADMIN") {
         setStatus(
-          `Signed in as ${matchedUser.name}. Your account is pending admin approval — the portal will show no data until activated.`,
+          `Your account is pending admin approval — the portal will show no data until activated.`,
         );
-      } else {
-        setStatus(`Signed in as ${matchedUser.name} (${roleLabels[matchedUser.role]}).`);
       }
+      setSuccessMessage(
+        `Signed in as ${matchedUser.name} (${roleLabels[matchedUser.role]}). Taking you to your dashboard...`,
+      );
+      // Stays in the success state until the dashboard replaces this page.
+      setPhase("success");
       router.replace(getDashboardPath(matchedUser.role));
     } catch (loginError) {
       let errorMessage = "Sign in failed.";
@@ -99,8 +105,7 @@ export function LoginPageClient() {
         }
       }
       setStatus(errorMessage);
-    } finally {
-      setIsSubmitting(false);
+      setPhase("idle");
     }
   }
 
@@ -164,8 +169,9 @@ export function LoginPageClient() {
               onChange={(event) => setPassword(event.target.value)}
             />
             <Button type="submit" fullWidth disabled={isSubmitting}>
-              {isSubmitting ? "Signing in..." : "Sign in"}
+              {phase === "success" ? "Signed in" : isSubmitting ? "Signing in..." : "Sign in"}
             </Button>
+            <SignInProgress phase={phase} successMessage={successMessage} />
           </form>
           {status ? (
             <Alert variant="neutral" className="mt-4">

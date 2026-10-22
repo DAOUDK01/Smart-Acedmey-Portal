@@ -194,3 +194,154 @@ describe("GazeAnalyzer", () => {
     expect(analyzer.getState()).toBe("FOCUSED");
   });
 });
+describe("GazeAnalyzer default timing", () => {
+  const away = { horizontal: 0.6, vertical: 0, headYaw: 0, headPitch: 0 };
+  const focused = { horizontal: 0, vertical: 0, headYaw: 0, headPitch: 0 };
+
+  it("only reports looking away after 6 seconds", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(away, 1000);
+    expect(analyzer.update(away, 6900)).toBe("FOCUSED");
+    expect(analyzer.update(away, 7000)).toBe("LOOKING_AWAY");
+  });
+
+  it("restarts the 6 seconds when the student looks back in between", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(away, 1000);
+    analyzer.update(focused, 5000);
+    analyzer.update(away, 5100);
+    expect(analyzer.update(away, 10000)).toBe("FOCUSED");
+    expect(analyzer.update(away, 11100)).toBe("LOOKING_AWAY");
+  });
+
+  it("treats flicker between looking away and no face as one away period", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(away, 1000);
+    analyzer.update(null, 3000);
+    analyzer.update(away, 5000);
+    expect(analyzer.update(null, 7000)).not.toBe("FOCUSED");
+  });
+
+  it("starts a fresh session as no face and focuses once a face is seen", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.reset("NO_FACE");
+    expect(analyzer.update(null, 1000)).toBe("NO_FACE");
+    analyzer.update(focused, 1100);
+    expect(analyzer.update(focused, 1900)).toBe("FOCUSED");
+  });
+});
+
+describe("GazeAnalyzer eye closure and countdown", () => {
+  const focused = { horizontal: 0, vertical: 0, headYaw: 0, headPitch: 0, eyeClosure: 0 };
+  const eyesShut = { ...focused, eyeClosure: 0.9 };
+
+  it("reads eye closure from the blink blendshapes", () => {
+    const sample = extractGazeSample([createBlendshapes({ eyeBlinkLeft: 0.8, eyeBlinkRight: 0.6 })], undefined);
+    expect(sample!.eyeClosure).toBeCloseTo(0.7);
+  });
+
+  it("ignores a blink but treats eyes kept shut as not watching", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(focused, 1000);
+    analyzer.update(eyesShut, 1100);
+    analyzer.update(focused, 1300);
+    expect(analyzer.update(focused, 8000)).toBe("FOCUSED");
+
+    analyzer.update(eyesShut, 9000);
+    analyzer.update(eyesShut, 10000);
+    expect(analyzer.update(eyesShut, 15000)).toBe("LOOKING_AWAY");
+  });
+
+  it("does not report the eyes as missing or start a countdown during a blink", () => {
+    const halfShut = { ...focused, eyeClosure: 0.45, vertical: -0.5 };
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(focused, 1000);
+    analyzer.update(halfShut, 1100);
+    analyzer.update(eyesShut, 1200);
+    expect(analyzer.getAwayReason()).toBeNull();
+    expect(analyzer.getAwayCountdownMs(1200)).toBeNull();
+    analyzer.update(halfShut, 1400);
+    expect(analyzer.getAwayReason()).toBeNull();
+    expect(analyzer.update(focused, 1500)).toBe("FOCUSED");
+    expect(analyzer.getAwayCountdownMs(1500)).toBeNull();
+  });
+
+  it("ignores the downward gaze of eyes reopening right after a blink", () => {
+    const reopening = { ...focused, eyeClosure: 0.2, vertical: -0.5 };
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(focused, 1000);
+    analyzer.update(eyesShut, 1100);
+    analyzer.update(reopening, 1250);
+    expect(analyzer.getAwayReason()).toBeNull();
+    expect(analyzer.getAwayCountdownMs(1250)).toBeNull();
+    expect(analyzer.update(focused, 1400)).toBe("FOCUSED");
+    expect(analyzer.getAwayCountdownMs(1400)).toBeNull();
+  });
+
+  it("keeps a running look-away countdown going through a blink", () => {
+    const glance = { ...focused, horizontal: 0.6 };
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(glance, 1000);
+    analyzer.update(eyesShut, 3000);
+    analyzer.update(glance, 3200);
+    expect(analyzer.getAwayCountdownMs(3200)).toBe(3800);
+    expect(analyzer.update(glance, 7000)).toBe("LOOKING_AWAY");
+  });
+
+  it("confirms a face within half a second of it appearing", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.reset("NO_FACE");
+    analyzer.update(focused, 1000);
+    expect(analyzer.update(focused, 1400)).toBe("FOCUSED");
+  });
+
+  it("counts down to the pause while the student is looking away", () => {
+    const glance = { ...focused, horizontal: 0.6 };
+    const analyzer = new GazeAnalyzer();
+    expect(analyzer.getAwayCountdownMs(1000)).toBeNull();
+    analyzer.update(glance, 1000);
+    expect(analyzer.getAwayCountdownMs(3000)).toBe(4000);
+    analyzer.update(focused, 3500);
+    expect(analyzer.getAwayCountdownMs(3500)).toBeNull();
+  });
+});
+
+describe("GazeAnalyzer when the face or eyes are not detected", () => {
+  const focused = { horizontal: 0, vertical: 0, headYaw: 0, headPitch: 0, eyeClosure: 0 };
+  const glance = { ...focused, horizontal: 0.6 };
+  const eyesShut = { ...focused, eyeClosure: 0.9 };
+
+  it("pauses 6 seconds after the face disappears", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(null, 1000);
+    expect(analyzer.update(null, 6900)).toBe("FOCUSED");
+    expect(analyzer.update(null, 7000)).toBe("NO_FACE");
+    expect(analyzer.getAwayReason()).toBe("no-face");
+  });
+
+  it("pauses 6 seconds after the eyes stay shut", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(eyesShut, 1000);
+    analyzer.update(eyesShut, 2000);
+    expect(analyzer.getAwayReason()).toBe("eyes-closed");
+    expect(analyzer.getAwayCountdownMs(2000)).toBe(5000);
+    expect(analyzer.update(eyesShut, 6900)).toBe("FOCUSED");
+    expect(analyzer.update(eyesShut, 7000)).toBe("LOOKING_AWAY");
+    expect(analyzer.getAwayReason()).toBe("eyes-closed");
+  });
+
+  it("does not cut a glance short because of one dropped detection", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(glance, 1000);
+    analyzer.update(null, 4000);
+    expect(analyzer.update(glance, 4100)).toBe("FOCUSED");
+    expect(analyzer.update(glance, 6900)).toBe("FOCUSED");
+    expect(analyzer.update(glance, 7000)).toBe("LOOKING_AWAY");
+  });
+
+  it("counts down from 6 seconds once the face is gone", () => {
+    const analyzer = new GazeAnalyzer();
+    analyzer.update(null, 1000);
+    expect(analyzer.getAwayCountdownMs(1500)).toBe(5500);
+  });
+});

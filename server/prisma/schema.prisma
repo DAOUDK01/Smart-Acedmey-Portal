@@ -66,6 +66,7 @@ model User {
   otpCodes           OtpCode[]
   passwordResetTokens PasswordResetToken[]
   sectionCourseAssignments SectionCourseAssignment[]
+  studyPlans         StudyPlan[]
 }
 
 model OtpCode {
@@ -377,4 +378,103 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+enum StudyPlanStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum StudyTaskType {
+  WATCH_LECTURE
+  LEARN_TOPIC
+  PRACTICE_QUIZ
+  REVISE
+  REVIEW_MISTAKES
+}
+
+enum StudyTaskPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum StudyTaskStatus {
+  PENDING
+  COMPLETED
+  SKIPPED
+}
+
+/// A student's personal study plan. Only one plan per student is ACTIVE; replaced plans are ARCHIVED.
+model StudyPlan {
+  id              String          @id @default(cuid())
+  studentId       String
+  title           String
+  status          StudyPlanStatus @default(ACTIVE)
+  courseIds       Json
+  /// Student-entered topics with optional confidence (1-5): [{ courseId, name, confidence }]
+  topics          Json
+  examDate        DateTime?       @db.Date
+  startDate       DateTime        @db.Date
+  endDate         DateTime        @db.Date
+  dailyMinutes    Int
+  /// Weekdays the student studies on (0 = Sunday ... 6 = Saturday)
+  studyDays       Json
+  /// Minutes after midnight when a study session starts
+  startMinute     Int
+  targetScore     Int?
+  goal            String?
+  /// "AI" when validated AI advice shaped the plan, "RULES" for the rule-based planner
+  generatedBy     String
+  aiSummary       String?
+  recommendations Json
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  student         User            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  tasks           StudyTask[]
+  history         StudyPlanHistory[]
+
+  @@index([studentId, status])
+}
+
+model StudyTask {
+  id              String            @id @default(cuid())
+  planId          String
+  courseId        String?
+  subject         String
+  topic           String
+  title           String
+  type            StudyTaskType
+  lectureId       String?
+  mockExamId      String?
+  scheduledDate   DateTime          @db.Date
+  startMinute     Int?
+  durationMinutes Int
+  priority        StudyTaskPriority
+  status          StudyTaskStatus   @default(PENDING)
+  /// Data-based explanation of why the task is in the plan
+  reason          String?
+  skipReason      String?
+  completedAt     DateTime?
+  autoCompleted   Boolean           @default(false)
+  isCustom        Boolean           @default(false)
+  sortOrder       Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  plan            StudyPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, scheduledDate])
+}
+
+/// Meaningful plan revisions (created, regenerated, missed tasks rescheduled).
+model StudyPlanHistory {
+  id        String    @id @default(cuid())
+  planId    String
+  action    String
+  summary   String
+  details   Json?
+  createdAt DateTime  @default(now())
+  plan      StudyPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, createdAt])
 }

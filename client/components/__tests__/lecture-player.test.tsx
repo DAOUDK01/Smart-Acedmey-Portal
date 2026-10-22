@@ -24,7 +24,10 @@ const quiz: LectureQuiz = {
   timestamp: 10,
 };
 
-function setup(overrides: Partial<ComponentProps<typeof LecturePlayer>> = {}) {
+function setup(
+  overrides: Partial<ComponentProps<typeof LecturePlayer>> = {},
+  { faceDetected = true }: { faceDetected?: boolean } = {},
+) {
   const onSubmitAnswer = vi.fn().mockResolvedValue({
     passed: true,
     correctAnswer: "4",
@@ -61,6 +64,8 @@ function setup(overrides: Partial<ComponentProps<typeof LecturePlayer>> = {}) {
     paused = false;
     return Promise.resolve();
   });
+  // Playback is blocked until the gaze monitor sees the student, as it does once the camera starts.
+  if (faceDetected) act(() => gazeProps.onResumeRequest?.());
   /** Plays forward one second at a time, like real playback, so the seek lock stays quiet. */
   const playUntil = (seconds: number) => {
     for (let t = Math.floor(currentTime) + 1; t <= seconds; t++) {
@@ -211,6 +216,47 @@ describe("LecturePlayer quiz checkpoint", () => {
   });
 });
 
+describe("LecturePlayer adaptive learning", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    gazeProps = {};
+  });
+
+  it("presents the checkpoint quiz as recommended, without technical details", () => {
+    const { playUntil } = setup({ adaptiveLevel: "medium" });
+    playUntil(10);
+    expect(screen.getByText("Recommended for You")).toBeInTheDocument();
+    expect(
+      screen.getByText("Based on your recent performance, this quiz is suitable for your current level."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/base difficulty|adaptive difficulty|threshold|algorithm/i)).toBeNull();
+  });
+
+  it.each([
+    ["easy", "Review the topic and practice again to improve your score."],
+    ["medium", "Keep practicing to unlock harder quizzes."],
+    ["hard", "Great progress! You are ready for more challenging questions."],
+  ] as const)("shows the %s level and its advice after the checkpoint", async (level, advice) => {
+    const { playUntil } = setup({ adaptiveLevel: level });
+    playUntil(10);
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Answer" }));
+    expect(await screen.findByText("Your current level:")).toBeInTheDocument();
+    expect(screen.getByText(level[0].toUpperCase() + level.slice(1))).toBeInTheDocument();
+    expect(screen.getByText(advice)).toBeInTheDocument();
+  });
+
+  it("shows no adaptive messages when the level is unknown", async () => {
+    const { playUntil } = setup();
+    playUntil(10);
+    expect(screen.queryByText("Recommended for You")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Answer" }));
+    await screen.findByRole("button", { name: "Continue Watching" });
+    expect(screen.queryByText("Your current level:")).toBeNull();
+  });
+});
+
 describe("LecturePlayer gaze monitoring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -218,8 +264,9 @@ describe("LecturePlayer gaze monitoring", () => {
   });
 
   it("pauses a playing video when the student looks away and resumes when they look back", () => {
+    // The lecture auto-started when the student's face was detected.
     const { video, playUntil } = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Play lecture" }));
+    expect(video.paused).toBe(false);
     playUntil(3);
 
     act(() => gazeProps.onPauseRequest?.());
@@ -243,21 +290,58 @@ describe("LecturePlayer gaze monitoring", () => {
     expect(video.paused).toBe(true);
   });
 
-  it("does not start a video the student never played when they look back", () => {
+  it("waits for the student's face before starting, then starts the lecture automatically", () => {
+    const { video } = setup({}, { faceDetected: false });
+
+    // Autoplay before a face is detected is stopped.
+    fireEvent.play(video);
+    expect(video.paused).toBe(true);
+    expect(video.play).not.toHaveBeenCalled();
+
+    act(() => gazeProps.onPauseRequest?.());
+    act(() => gazeProps.onResumeRequest?.());
+    expect(video.play).toHaveBeenCalledTimes(1);
+    expect(video.paused).toBe(false);
+  });
+
+  it("does not restart a lecture the student paused themselves when they look back", () => {
     const { video } = setup();
-    video.pause();
+    fireEvent.play(video);
+    fireEvent.click(screen.getByRole("button", { name: "Pause lecture" }));
     (video.play as unknown as ReturnType<typeof vi.fn>).mockClear();
+
     act(() => gazeProps.onPauseRequest?.());
     act(() => gazeProps.onResumeRequest?.());
     expect(video.play).not.toHaveBeenCalled();
   });
 
-  it("stops blocking playback when monitoring becomes unavailable", () => {
-    const { video } = setup();
+  it("stops blocking and starts the lecture when monitoring becomes unavailable", () => {
+    const { video } = setup({}, { faceDetected: false });
     act(() => gazeProps.onPauseRequest?.());
     act(() => gazeProps.onUnavailable?.());
 
-    fireEvent.click(screen.getByRole("button", { name: "Play lecture" }));
     expect(video.play).toHaveBeenCalled();
+    expect(video.paused).toBe(false);
+  });
+
+  it("does not re-block playback when switching between a YouTube and an uploaded lecture", () => {
+    const { rerender, container } = setup();
+    const props = {
+      title: "Lecture",
+      apiBaseUrl: "http://localhost:4010",
+      quizzes: [quiz],
+      answeredQuizIds: new Set<string>(),
+      onQuizAnswered: vi.fn(),
+      onSubmitAnswer: vi.fn(),
+    };
+    // The monitor stays focused throughout, so it never reports the face again.
+    rerender(<LecturePlayer {...props} videoUrl="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />);
+    rerender(<LecturePlayer {...props} videoUrl="https://example.com/other.mp4" />);
+
+    const video = container.querySelector("video") as HTMLVideoElement;
+    (video.pause as unknown as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.play(video);
+    expect(video.pause).not.toHaveBeenCalled();
+    expect(screen.queryByText(/face the screen/i)).toBeNull();
   });
 });

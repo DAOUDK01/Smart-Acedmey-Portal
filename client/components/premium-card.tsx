@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Eyebrow } from "@/components/ui/eyebrow";
+import { AnimatedNumber } from "@/components/ui/animated-number";
+import { parseCountable } from "@/lib/countable";
 
 export function PremiumCard({
   eyebrow,
@@ -14,14 +16,18 @@ export function PremiumCard({
   children?: ReactNode;
   accent?: string;
 }) {
+  // Stat tiles pass a number as the title ("12", "85%"); those count up, every other title is plain text.
+  const countable = parseCountable(title);
   return (
-    <div className="glass-panel card-shine motion-fade group relative overflow-hidden rounded-[28px] p-6 transition-all duration-300 hover:-translate-y-1 hover:border-accent-purple/25">
+    <div className="glass-panel card-shine motion-fade group relative overflow-hidden rounded-[28px] p-6 transition-[transform,border-color,box-shadow] duration-300 ease-out motion-safe:hover:-translate-y-1 hover:shadow-[0_20px_52px_rgba(15,23,42,0.13)] hover:border-accent-purple/25">
       <div
         className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accent} opacity-25 transition-opacity duration-500 group-hover:opacity-45`}
       />
       <div className="relative">
         {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
-        <h3 className="mt-2 text-xl font-semibold text-white">{title}</h3>
+        <h3 className="mt-2 text-xl font-semibold text-white">
+          {countable ? <AnimatedNumber value={countable.value} suffix={countable.suffix} /> : title}
+        </h3>
         {description ? (
           <p className="mt-2 text-sm leading-6 text-slate-500">
             {description}

@@ -46,6 +46,16 @@ type VisionModule = {
   };
 };
 
+// On some Windows GPU drivers creating the GPU landmarker never settles (no error, no result), which
+// would stall every later attempt; each attempt is therefore bounded and a hung GPU is skipped after.
+export const ATTEMPT_TIMEOUT_MS: Record<"GPU" | "CPU", number> = { GPU: 8000, CPU: 15000 };
+
+class AttemptTimeoutError extends Error {}
+
+// The WASM fileset is the slow part of start-up; resolve it once per path and reuse it across
+// delegate attempts instead of fetching and compiling it again for each one.
+const filesetCache = new Map<string, Promise<any>>();
+
 async function tryLoad(wasmPath: string, modelPath: string, delegate: "GPU" | "CPU"): Promise<FaceLandmarkerLike | null> {
   let vision: VisionModule;
   try {
@@ -56,25 +66,58 @@ async function tryLoad(wasmPath: string, modelPath: string, delegate: "GPU" | "C
 
   let fileset: any;
   try {
-    fileset = await vision.FilesetResolver.forVisionTasks(wasmPath);
+    let pending = filesetCache.get(wasmPath);
+    if (!pending) {
+      pending = vision.FilesetResolver.forVisionTasks(wasmPath);
+      filesetCache.set(wasmPath, pending);
+    }
+    fileset = await pending;
   } catch {
+    filesetCache.delete(wasmPath);
     return null;
   }
 
+  let creating: Promise<{ detectForVideo: (video: HTMLVideoElement, timestampMs: number) => any; close: () => void }>;
   try {
-    const landmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
+    creating = vision.FaceLandmarker.createFromOptions(fileset, {
       baseOptions: {
         modelAssetPath: modelPath,
         delegate,
       },
       runningMode: "VIDEO",
       numFaces: 1,
+      // Slightly more permissive than the 0.5 defaults so a face is picked up quickly in average
+      // webcam lighting; the analyzer's sustain windows absorb any jitter this lets through.
+      minFaceDetectionConfidence: 0.4,
+      minFacePresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4,
       outputFaceBlendshapes: true,
       outputFacialTransformationMatrixes: true,
     });
-    return landmarker as unknown as FaceLandmarkerLike;
-  } catch {
+  } catch (error) {
+    console.warn(`Face landmarker (${delegate}, ${modelPath}) failed to start.`, error);
     return null;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const landmarker = await Promise.race([
+      creating,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new AttemptTimeoutError()), ATTEMPT_TIMEOUT_MS[delegate]);
+      }),
+    ]);
+    return landmarker as unknown as FaceLandmarkerLike;
+  } catch (error) {
+    if (error instanceof AttemptTimeoutError) {
+      // A late landmarker would otherwise hold its WASM memory and WebGL context for the session.
+      creating.then((late) => late.close(), () => undefined);
+      throw error;
+    }
+    console.warn(`Face landmarker (${delegate}, ${modelPath}) failed to load.`, error);
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -99,9 +142,58 @@ export async function loadFaceLandmarker(
     ? allAttempts.filter((attempt) => attempt.delegate === "CPU")
     : allAttempts;
 
+  let gpuHung = false;
   for (const a of attempts) {
-    const lm = await tryLoad(a.wasm, a.model, a.delegate);
-    if (lm) return lm;
+    if (gpuHung && a.delegate === "GPU") continue;
+    try {
+      const lm = await tryLoad(a.wasm, a.model, a.delegate);
+      if (lm) return lm;
+    } catch (error) {
+      if (!(error instanceof AttemptTimeoutError)) throw error;
+      console.warn(`Face landmarker (${a.delegate}) did not start within ${ATTEMPT_TIMEOUT_MS[a.delegate]}ms; trying the next option.`);
+      if (a.delegate === "GPU") gpuHung = true;
+    }
   }
   return null;
+}
+
+type LoadMode = "auto" | "cpu";
+const sharedLandmarkers = new Map<LoadMode, Promise<FaceLandmarkerLike | null>>();
+
+/**
+ * One landmarker per page, shared by every gaze monitor. Creating it takes seconds (WASM + model),
+ * so it is kept alive for the session instead of being rebuilt each time a lecture opens or the
+ * student returns to the tab. A failed load is not cached, so the next call retries.
+ */
+export function getSharedFaceLandmarker(options: { cpuOnly?: boolean } = {}): Promise<FaceLandmarkerLike | null> {
+  const mode: LoadMode = options.cpuOnly ? "cpu" : "auto";
+  let pending = sharedLandmarkers.get(mode);
+  if (!pending) {
+    pending = loadFaceLandmarker(options).catch(() => null);
+    sharedLandmarkers.set(mode, pending);
+    void pending.then((landmarker) => {
+      if (!landmarker && sharedLandmarkers.get(mode) === pending) sharedLandmarkers.delete(mode);
+    });
+  }
+  return pending;
+}
+
+/** Start loading the shared landmarker ahead of time, e.g. as soon as the student portal opens. */
+export function preloadFaceLandmarker(): void {
+  if (typeof window === "undefined") return;
+  void getSharedFaceLandmarker();
+}
+
+/** Drop a shared landmarker that turned out to be broken (e.g. the GPU delegate fails every frame). */
+export function discardSharedFaceLandmarker(landmarker: FaceLandmarkerLike): void {
+  for (const [mode, pending] of sharedLandmarkers) {
+    void pending.then((current) => {
+      if (current === landmarker && sharedLandmarkers.get(mode) === pending) {
+        sharedLandmarkers.delete(mode);
+      }
+    });
+  }
+  try {
+    landmarker.close();
+  } catch {}
 }

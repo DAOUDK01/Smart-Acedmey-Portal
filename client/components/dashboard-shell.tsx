@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "./sidebar";
+import { NotificationBell } from "./notification-bell";
+import { AIAssistant } from "@/components/ai-assistant/ai-assistant";
 import {
-  Bell,
   Search,
   BookOpen,
   Video,
@@ -137,8 +138,8 @@ export function DashboardShell({
           if (pendingApprovals.length > 0) {
             items.push({
               id: "staff-approvals",
-              title: `${pendingApprovals.length} staff approval${pendingApprovals.length === 1 ? "" : "s"} pending`,
-              description: "Review teacher and staff registrations.",
+              title: `${pendingApprovals.length} teacher approval${pendingApprovals.length === 1 ? "" : "s"} pending`,
+              description: "Review teacher registrations.",
               tab: "staff-approvals",
               icon: <Users size={16} />,
               tone: "warning",
@@ -339,6 +340,8 @@ export function DashboardShell({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [mobileNavOpen]);
 
+  const closeNotifications = useCallback(() => setNotifOpen(false), []);
+
   const notifCount = notifications.filter(
     (item) => item.tone !== "success",
   ).length;
@@ -492,69 +495,14 @@ export function DashboardShell({
             <div className="flex items-center gap-5">
               {/* Notifications */}
               <div className="relative" ref={notifRef}>
-                <button
-                  onClick={() => setNotifOpen((open) => !open)}
-                  className={cn(
-                    "relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition-all hover:text-slate-900",
-                    notifOpen && "text-slate-900",
-                  )}
-                  aria-label="Notifications"
-                >
-                  <Bell size={20} />
-                  {notifCount > 0 ? (
-                    <span className="absolute right-2.5 top-2.5 flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-danger opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-accent-danger border-2 border-ink-950" />
-                    </span>
-                  ) : null}
-                </button>
-
-                {notifOpen ? (
-                  <div className="glass-panel-opaque absolute right-0 top-12 w-80 overflow-hidden rounded-2xl">
-                    <div className="flex items-center justify-between border-b border-accent-purple/15 px-4 py-3">
-                      <p className="text-sm font-bold text-slate-900">
-                        Notifications
-                      </p>
-                      <span className="rounded-full bg-accent-purple/[0.06] px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                        {notifCount > 0 ? `${notifCount} new` : "All clear"}
-                      </span>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto p-2">
-                      {notifications.map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => navigateToTab(item.tab)}
-                          className={cn(
-                            "flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-accent-purple/[0.06]",
-                            item.tone === "warning" && "bg-rose-500/[0.06]",
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                              item.tone === "warning" &&
-                                "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm",
-                              item.tone === "info" &&
-                                "bg-accent-purple/10 text-accent-purple ring-1 ring-inset ring-accent-purple/20 backdrop-blur-sm",
-                              item.tone === "success" &&
-                                "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm",
-                            )}
-                          >
-                            {item.icon}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-slate-800">
-                              {item.title}
-                            </p>
-                            <p className="mt-0.5 text-xs text-slate-500">
-                              {item.description}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                <NotificationBell
+                  notifications={notifications}
+                  count={notifCount}
+                  open={notifOpen}
+                  onToggle={() => setNotifOpen((open) => !open)}
+                  onClose={closeNotifications}
+                  onSelect={navigateToTab}
+                />
               </div>
 
               <div className="h-6 w-px bg-accent-purple/15 mx-2" />
@@ -578,7 +526,7 @@ export function DashboardShell({
         )}
 
         {/* Scrollable Content */}
-        <main className="flex-1 overflow-y-auto page-canvas p-4 sm:p-8">
+        <main className="flex-1 overflow-y-auto page-canvas p-4 pb-24 sm:p-8 sm:pb-28">
           <div className="mx-auto max-w-6xl">
             <header className="mb-10">
               <Eyebrow className="text-slate-500">{roleLabels[role]} Dashboard</Eyebrow>
@@ -602,6 +550,7 @@ export function DashboardShell({
           </div>
         </main>
       </div>
+      <AIAssistant currentTab={activeTab} onNavigate={navigateToTab} />
     </div>
   );
 }

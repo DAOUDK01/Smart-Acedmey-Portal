@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DashboardShell } from "./dashboard-shell";
 import { PremiumCard } from "./premium-card";
 import { usePortalLock } from "@/lib/use-portal-lock";
+import { preloadFaceLandmarker } from "@/lib/gaze/face-landmarker-loader";
 import { getInitialTab, useTabHistory } from "@/lib/use-tab-history";
 import { PendingApprovalBanner } from "@/components/pending-approval-banner";
 import MaintenanceScreen from "@/components/maintenance-screen";
@@ -13,36 +14,25 @@ import {
   Bot,
   Clock,
   FileQuestion,
-  Flame,
   GraduationCap,
   PlayCircle,
   Send,
   Sparkles,
   ArrowRight,
-  Target,
-  TrendingUp,
   User as UserIcon,
   X,
   Check,
   RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useCountUp } from "@/lib/use-count-up";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { LecturePlayer, type LectureQuiz } from "@/components/lecture-player";
+import { DEFAULT_ADAPTIVE_LEVEL, type AdaptiveLevel } from "@/lib/adaptive-level";
 import { StudentDashboard } from "./student/student-dashboard";
 import { MockExams, type MockExam } from "./student/mock-exams";
+import { StudentPerformance, type PerformanceData } from "./student/student-performance";
+import type { AttemptHistoryItem, SubjectStat } from "@/lib/student-performance";
+import { localToday } from "@/lib/study-planner";
+import { StudyPlanner } from "./student/study-planner/study-planner";
 import { API_BASE_URL, apiFetch, authenticatedFetch } from "@/lib/api";
 
 type StudentProgress = {
@@ -104,6 +94,11 @@ type Quiz = {
   timestamp?: number;
   topic?: string;
   segment?: string;
+};
+
+type AdaptiveLevels = {
+  defaultLevel: AdaptiveLevel;
+  levels: { courseId: string; level: AdaptiveLevel }[];
 };
 
 type RecommendedLecture = Pick<
@@ -168,59 +163,6 @@ function formatTime(seconds: number) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-function ProgressRing({ value, label }: { value: number; label: string }) {
-  const count = useCountUp(value);
-  const radius = 54;
-  const circumference = 2 * Math.PI * radius;
-  const [offset, setOffset] = useState(circumference);
-  useEffect(() => {
-    const raf = requestAnimationFrame(() =>
-      setOffset(circumference * (1 - Math.min(100, value) / 100)),
-    );
-    return () => cancelAnimationFrame(raf);
-  }, [value, circumference]);
-  return (
-    <div className="relative h-36 w-36">
-      <svg className="h-full w-full -rotate-90" viewBox="0 0 128 128">
-        <defs>
-          <linearGradient id="ring-gradient" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#7C3AED" />
-            <stop offset="100%" stopColor="#0891B2" />
-          </linearGradient>
-        </defs>
-        <circle
-          cx="64"
-          cy="64"
-          r={radius}
-          fill="none"
-          stroke="rgba(124,58,237,0.1)"
-          strokeWidth="10"
-        />
-        <circle
-          cx="64"
-          cy="64"
-          r={radius}
-          fill="none"
-          stroke="url(#ring-gradient)"
-          strokeWidth="10"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 1.1s cubic-bezier(0.22,1,0.36,1)" }}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold tracking-tight text-slate-900">
-          {count}%
-        </span>
-        <span className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-          {label}
-        </span>
-      </div>
-    </div>
-  );
 }
 
 function SmartRecommendationCard({
@@ -306,13 +248,19 @@ export function StudentConsole() {
   const { ready, session, isApproved, maintenance } = usePortalLock("/student");
   const [activeTab, setActiveTab] = useState(() => getInitialTab("overview"));
   useTabHistory(activeTab, setActiveTab);
+  // Warm up the eye-detection model in the background so it is ready by the time a lecture opens.
+  useEffect(() => {
+    if (!ready) return;
+    const timer = window.setTimeout(preloadFaceLandmarker, 1500);
+    return () => window.clearTimeout(timer);
+  }, [ready]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [adaptiveLevels, setAdaptiveLevels] = useState<AdaptiveLevels | null>(null);
   const [mockExams, setMockExams] = useState<MockExam[]>([]);
   const [progress, setProgress] = useState<StudentProgress | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [selectedSubject, setSelectedSubject] = useState("all");
   const [currentLecture, setCurrentLecture] = useState<Lecture | RecommendedLecture | null>(null);
   const [lectureTab, setLectureTab] = useState<string | null>(null);
   const watchProgressRef = useRef(0);
@@ -328,6 +276,8 @@ export function StudentConsole() {
   });
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [dashboardRecommendation, setDashboardRecommendation] = useState<Recommendation | null>(null);
+  const [performanceData, setPerformanceData] = useState<PerformanceData>({ status: "loading" });
+  const performanceStale = useRef(true);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -379,7 +329,31 @@ export function StudentConsole() {
     };
     loadData();
     loadDashboardRecommendation();
+    void refreshAdaptiveLevels();
   }, [ready, isApproved, session?.email]);
+
+  // Real per-subject stats and the student's own answer history for the Performance charts.
+  const loadPerformance = async () => {
+    performanceStale.current = false;
+    setPerformanceData((current) => (current.status === "ready" ? current : { status: "loading" }));
+    try {
+      const [history, context] = await Promise.all([
+        apiFetch<AttemptHistoryItem[]>("/api/student/quiz/history/me"),
+        apiFetch<{ courses: SubjectStat[] }>(`/api/student/study-plans/context?today=${localToday()}`),
+      ]);
+      setPerformanceData({ status: "ready", history, subjects: context.courses });
+    } catch {
+      performanceStale.current = true;
+      setPerformanceData((current) =>
+        current.status === "ready" ? current : { status: "error", message: "Your results couldn't be loaded right now." },
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "progress" && ready && isApproved && performanceStale.current) void loadPerformance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, ready, isApproved]);
 
   const loadDashboardRecommendation = async () => {
     try {
@@ -401,6 +375,17 @@ export function StudentConsole() {
       .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   }, [quizzes, currentLecture]);
 
+  // The student's level in the current lecture's course: the same level the server picks quizzes by.
+  const currentAdaptiveLevel = useMemo(() => {
+    if (!currentLecture || !adaptiveLevels) return null;
+    const courseId = lectures.find((lecture) => lecture.id === currentLecture.id)?.courseId;
+    return (
+      adaptiveLevels.levels.find((item) => item.courseId === courseId)?.level ??
+      adaptiveLevels.defaultLevel ??
+      DEFAULT_ADAPTIVE_LEVEL
+    );
+  }, [adaptiveLevels, currentLecture, lectures]);
+
   const handleSubmitQuizAnswer = async (quiz: LectureQuiz, answer: string) => {
     const response = await authenticatedFetch(`/api/teacher/quizzes/${quiz.id}/attempt`, {
       method: "POST",
@@ -420,10 +405,32 @@ export function StudentConsole() {
     };
 
     if (result) {
+      performanceStale.current = true;
       setMockExams((current) => current.filter((q) => q.id !== quiz.id));
       void refreshProgress();
+      void refreshQuizzes();
+      // Wait for the updated level so the result screen shows the level this answer produced.
+      await refreshAdaptiveLevels();
     }
     return result;
+  };
+
+  const refreshAdaptiveLevels = async () => {
+    try {
+      setAdaptiveLevels(await apiFetch<AdaptiveLevels>("/api/student/quiz/level/me"));
+    } catch {
+      // the level is only informational; keep the last known value
+    }
+  };
+
+  // The server picks each checkpoint's quizzes from the student's latest scores, so re-fetch after
+  // an answer to let upcoming checkpoints use the updated difficulty.
+  const refreshQuizzes = async () => {
+    try {
+      setQuizzes(await apiFetch<Quiz[]>("/api/student/quiz/questions"));
+    } catch {
+      // keep the previously loaded quizzes if the refresh fails
+    }
   };
 
   const handleSubmitMockExam = async (
@@ -623,49 +630,17 @@ export function StudentConsole() {
   const visibleLectures = useMemo(() => lectures.filter((lecture) => lecture.courseId === selectedCourseId), [lectures, selectedCourseId]);
 
   const weakTopics = useMemo(() => parseWeakTopics(progress?.weakTopics), [progress]);
-  const avgScoreCount = useCountUp(progress?.avgScore ?? 0);
 
-  const subjectReports = useMemo(() => {
-    return courses.map((course, index) => {
-      const overall = progress?.avgScore ?? 0;
-      const courseLectures = lectures.filter((lecture) => lecture.courseId === course.id);
-      const score = Math.max(35, Math.min(98, Math.round(overall - index * 5 + (progress?.streakDays ?? 0))));
-      const progressValue = Math.max(20, Math.min(100, Math.round((progress?.progressPercentage ?? 0) - index * 6 + 10)));
-      const recommendation = score < 60
-        ? "Rewatch the latest lecture and attempt one extra checkpoint quiz."
-        : score < 80
-          ? "Do a focused revision session and ask the AI tutor one concept question."
-          : "Maintain momentum with one advanced practice set this week.";
-
-      return {
-        subject: course.title,
-        score,
-        progress: progressValue,
-        quizzesReady: quizzes.filter((quiz) => courseLectures.some((lecture) => lecture.id === quiz.lectureId)).length,
-        recommendation,
-      };
-    });
-  }, [courses, lectures, progress, quizzes]);
-
-  const visibleSubjectReports = useMemo(() => {
-    if (selectedSubject === "all") {
-      return subjectReports;
+  // Practice questions available per course (approved checkpoint quizzes on its lectures).
+  const quizzesByCourse = useMemo(() => {
+    const courseOf = new Map(lectures.map((lecture) => [lecture.id, lecture.courseId]));
+    const counts: Record<string, number> = {};
+    for (const quiz of quizzes) {
+      const courseId = quiz.lectureId ? courseOf.get(quiz.lectureId) : undefined;
+      if (courseId) counts[courseId] = (counts[courseId] ?? 0) + 1;
     }
-    return subjectReports.filter((report) => report.subject === selectedSubject);
-  }, [selectedSubject, subjectReports]);
-
-  const weeklyProgressData = useMemo(() => {
-    const baseProgress = progress?.progressPercentage ?? 0;
-    const baseScore = progress?.avgScore ?? 0;
-    return [
-      { name: "Mon", progress: Math.max(10, baseProgress - 18), score: Math.max(20, baseScore - 16) },
-      { name: "Tue", progress: Math.max(12, baseProgress - 12), score: Math.max(30, baseScore - 10) },
-      { name: "Wed", progress: Math.max(16, baseProgress - 8), score: Math.max(38, baseScore - 7) },
-      { name: "Thu", progress: Math.max(20, baseProgress - 5), score: Math.max(44, baseScore - 4) },
-      { name: "Fri", progress: Math.max(24, baseProgress - 2), score: Math.max(52, baseScore - 2) },
-      { name: "Sat", progress: Math.min(100, baseProgress), score: Math.min(100, baseScore) },
-    ];
-  }, [progress]);
+    return counts;
+  }, [lectures, quizzes]);
 
   const recommendations = useMemo(() => {
     if (weakTopics.length === 0) {
@@ -801,6 +776,7 @@ export function StudentConsole() {
                 processingError={currentLecture.processingError}
                 quizzes={currentLectureQuizzes}
                 answeredQuizIds={answeredQuizzes}
+                adaptiveLevel={currentAdaptiveLevel}
                 isActive={activeTab === lectureTab}
                 onWatchProgress={(percent) => {
                   watchProgressRef.current = percent;
@@ -945,261 +921,30 @@ export function StudentConsole() {
         )}
 
         {activeTab === "progress" && (
-          <div className="space-y-6">
-            <PremiumCard
-              eyebrow="Performance Center"
-              title="Detailed Subject Report"
-              description="Click any subject below to focus its charts, or compare everything at once."
-            >
-              <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-                <div className="space-y-4">
-                  <Select
-                    value={selectedSubject}
-                    onChange={(e) => setSelectedSubject(e.target.value)}
-                  >
-                    <option value="all">All Subjects</option>
-                    {subjectReports.map((report) => (
-                      <option key={report.subject} value={report.subject}>
-                        {report.subject}
-                      </option>
-                    ))}
-                  </Select>
+          <StudentPerformance
+            data={performanceData}
+            onRetry={() => void loadPerformance()}
+            progressPercentage={progress?.progressPercentage ?? 0}
+            averageScore={progress?.avgScore ?? 0}
+            failedQuizzes={progress?.failedQuizzes ?? 0}
+            streakDays={progress?.streakDays ?? 0}
+            weakTopics={weakTopics}
+            recommendations={recommendations}
+            quizzesByCourse={quizzesByCourse}
+          />
+        )}
 
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl bg-accent-purple/[0.06] p-5">
-                      <ProgressRing
-                        value={progress?.progressPercentage ?? 0}
-                        label="Overall Progress"
-                      />
-                    </div>
-                    <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
-                      <div className="flex items-center gap-2">
-                        <Target size={16} className="text-accent-cyan" />
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                          Average Score
-                        </p>
-                      </div>
-                      <p className="mt-2 text-3xl font-bold text-accent-cyan">
-                        {avgScoreCount}%
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {progress?.failedQuizzes
-                          ? `${progress.failedQuizzes} quiz attempt${progress.failedQuizzes === 1 ? "" : "s"} need a retry`
-                          : "Steady across your recent checkpoints"}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                        Weak Topics
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {weakTopics.length ? (
-                          weakTopics.map((topic) => (
-                            <span
-                              key={topic}
-                              className="flex items-center gap-1.5 rounded-full bg-rose-500/10 px-3 py-1 text-xs text-rose-600"
-                            >
-                              <span className="relative flex h-1.5 w-1.5">
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500 opacity-60" />
-                                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-rose-500" />
-                              </span>
-                              {topic}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs text-emerald-600">
-                            No weak topics flagged
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="grid gap-6 lg:grid-cols-2">
-                    <PremiumCard
-                      eyebrow="Trend"
-                      title="Weekly Progress"
-                      description="A quick visual of your learning momentum."
-                    >
-                      <div className="mt-4 h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={weeklyProgressData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                            <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: "#0f172a",
-                                border: "1px solid #ffffff10",
-                                borderRadius: "12px",
-                              }}
-                              itemStyle={{ color: "#fff", fontSize: "12px" }}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="progress"
-                              stroke="#8B5CF6"
-                              strokeWidth={3}
-                              dot={{ r: 4 }}
-                              activeDot={{ r: 6 }}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </PremiumCard>
-
-                    <PremiumCard
-                      eyebrow="Scores"
-                      title="Subject Comparison"
-                      description="Current strength across your active subjects."
-                    >
-                      <div className="mt-4 h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={visibleSubjectReports} barCategoryGap="24%">
-                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-                            <XAxis dataKey="subject" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                            <Tooltip
-                              cursor={{ fill: "rgba(124,58,237,0.06)" }}
-                              contentStyle={{
-                                backgroundColor: "#0f172a",
-                                border: "1px solid #ffffff10",
-                                borderRadius: "12px",
-                              }}
-                              itemStyle={{ color: "#fff", fontSize: "12px" }}
-                            />
-                            <Bar dataKey="score" radius={[6, 6, 0, 0]} animationDuration={700}>
-                              {visibleSubjectReports.map((report) => (
-                                <Cell
-                                  key={report.subject}
-                                  fill={report.score < 60 ? "#f43f5e" : report.score < 80 ? "#f59e0b" : "#06b6d4"}
-                                />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </PremiumCard>
-                  </div>
-
-                  <div className="space-y-3">
-                    {visibleSubjectReports.map((report) => {
-                      const isFiltered = selectedSubject === report.subject;
-                      const scoreTone =
-                        report.score < 60
-                          ? "text-rose-600"
-                          : report.score < 80
-                            ? "text-amber-600"
-                            : "text-emerald-600";
-                      return (
-                        <button
-                          key={report.subject}
-                          type="button"
-                          onClick={() =>
-                            setSelectedSubject(isFiltered ? "all" : report.subject)
-                          }
-                          className={cn(
-                            "group w-full rounded-2xl border p-4 text-left transition-all duration-200",
-                            isFiltered
-                              ? "border-accent-purple bg-accent-purple/[0.08] ring-1 ring-accent-purple/30"
-                              : "border-accent-purple/10 bg-accent-purple/[0.06] hover:-translate-y-0.5 hover:border-accent-purple/25 hover:bg-accent-purple/[0.1] active:scale-[0.99]",
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <h4 className="text-sm font-bold text-white">
-                                  {report.subject}
-                                </h4>
-                                {isFiltered && (
-                                  <span className="rounded-full bg-accent-purple/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-accent-purple">
-                                    Focused
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-1 text-xs text-slate-400">
-                                {report.recommendation}
-                              </p>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-3 text-right">
-                              <p className="text-2xl font-bold text-accent-cyan">
-                                {report.score}%
-                              </p>
-                              <ArrowRight
-                                size={16}
-                                className={cn(
-                                  "text-slate-300 transition-all duration-200 group-hover:translate-x-0.5",
-                                  scoreTone,
-                                )}
-                              />
-                            </div>
-                          </div>
-                          <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            <div>
-                              <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
-                                <span>Subject Progress</span>
-                                <span>{report.progress}%</span>
-                              </div>
-                              <div className="h-2 overflow-hidden rounded-full bg-accent-purple/[0.06]">
-                                <div
-                                  className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan transition-[width] duration-700 ease-out"
-                                  style={{ width: `${report.progress}%` }}
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
-                                <span>Quiz Readiness</span>
-                                <span>{report.quizzesReady}</span>
-                              </div>
-                              <div className="h-2 overflow-hidden rounded-full bg-accent-purple/[0.06]">
-                                <div
-                                  className="h-2 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-[width] duration-700 ease-out"
-                                  style={{ width: `${Math.min(100, report.quizzesReady * 20)}%` }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <PremiumCard
-                    eyebrow="Recommendations"
-                    title="Smart Next Steps"
-                    description="Action plan based on your recent learning signals."
-                  >
-                    <div className="space-y-3">
-                      {recommendations.map((recommendation) => (
-                        <div
-                          key={recommendation}
-                          className="flex items-start gap-3 rounded-2xl bg-accent-purple/[0.06] p-4 text-sm text-slate-600 transition-all duration-200 hover:bg-accent-purple/[0.1]"
-                        >
-                          <Flame
-                            size={16}
-                            className="mt-0.5 shrink-0 text-amber-500"
-                          />
-                          <span className="leading-relaxed">{recommendation}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </PremiumCard>
-
-                  <div className="flex items-center gap-3 rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-4 text-sm text-slate-600">
-                    <TrendingUp className="h-4 w-4 shrink-0 text-accent-purple" />
-                    <span>
-                      {progress?.streakDays
-                        ? `You're on a ${progress.streakDays}-day streak — one lecture today keeps the momentum.`
-                        : "Start a study streak today with one lecture or quiz."}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </PremiumCard>
-          </div>
+        {activeTab === "study-planner" && (
+          <StudyPlanner
+            onOpenLecture={(lectureId) => {
+              const lecture = lectures.find((item) => item.id === lectureId);
+              if (!lecture) return false;
+              void openLecture(lecture);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+              return true;
+            }}
+            onOpenMockExams={() => setActiveTab("exams")}
+          />
         )}
 
         {activeTab === "ai-tutor" && (

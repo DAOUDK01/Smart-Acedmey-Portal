@@ -37,6 +37,13 @@ import {
 } from "lucide-react";
 import { TeacherDashboard } from "./teacher/teacher-dashboard";
 import { PendingApprovalBanner } from "@/components/pending-approval-banner";
+import { AdaptiveLearningInfo, AdaptiveLearningStatus } from "@/components/adaptive-learning-info";
+import {
+  DEFAULT_ADAPTIVE_LEVEL,
+  LEVEL_BADGE_CLASS,
+  formatLevel,
+  type AdaptiveLevel,
+} from "@/lib/adaptive-level";
 import MaintenanceScreen from "@/components/maintenance-screen";
 import { isQuizStatus, type QuizStatus } from "@/lib/quiz-utils";
 import {
@@ -118,13 +125,32 @@ type Quiz = {
   reviewComment?: string;
   createdAt?: string;
   timestamp?: number;
+  /** Set only on questions written by the AI generator. */
+  aiPrompt?: string | null;
 };
+
+type AiGenerationResult =
+  | {
+      ok: true;
+      kind: "exam-published" | "exam-review" | "questions";
+      title?: string;
+      examId?: string;
+      questions: Quiz[];
+      publishError?: string;
+    }
+  | { ok: false; kind: "exam" | "questions"; error: string };
 
 type User = {
   id: string;
   role: "ADMIN" | "TEACHER" | "STUDENT" | "GUARDIAN";
   name: string;
   email: string;
+};
+
+/** A student's adaptive level per course, as the server uses it to pick their quizzes. */
+type StudentAdaptiveLevels = {
+  studentId: string;
+  levels: { courseId: string; level: AdaptiveLevel; averageScore: number; attempts: number }[];
 };
 
 type StudentProgress = {
@@ -186,6 +212,95 @@ type MockExamFormState = {
   endsAt: string;
   questionIds: string[];
 };
+
+// `datetime-local` inputs hold local wall-clock time; toISOString() would put UTC in the field and
+// shift the exam window by the timezone offset every time an exam is edited and saved.
+function toDateTimeLocal(value: string) {
+  const date = new Date(value);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+type ExamDisplayStatus = "live" | "scheduled" | "draft" | "ended";
+
+const EXAM_SECTION_ORDER: ExamDisplayStatus[] = ["live", "scheduled", "draft", "ended"];
+
+const EXAM_STATUS_STYLES: Record<
+  ExamDisplayStatus,
+  { label: string; hint: string; text: string; badge: string; border: string }
+> = {
+  live: {
+    label: "Live",
+    hint: "Students can take these now.",
+    text: "text-emerald-600",
+    badge: "bg-emerald-500/10 text-emerald-600 ring-emerald-500/25",
+    border: "border-l-emerald-500",
+  },
+  scheduled: {
+    label: "Scheduled",
+    hint: "Published, opening for students later.",
+    text: "text-accent-cyan",
+    badge: "bg-accent-cyan/10 text-accent-cyan ring-accent-cyan/25",
+    border: "border-l-accent-cyan",
+  },
+  draft: {
+    label: "Drafts",
+    hint: "Not visible to students until published.",
+    text: "text-amber-600",
+    badge: "bg-amber-500/10 text-amber-600 ring-amber-500/25",
+    border: "border-l-amber-500",
+  },
+  ended: {
+    label: "Ended",
+    hint: "The availability window has closed.",
+    text: "text-slate-500",
+    badge: "bg-slate-500/10 text-slate-500 ring-slate-500/25",
+    border: "border-l-slate-400",
+  },
+};
+
+function getExamDisplayStatus(exam: TeacherMockExam, now: number): ExamDisplayStatus {
+  if (exam.status !== "published") return "draft";
+  if (exam.endsAt && new Date(exam.endsAt).getTime() < now) return "ended";
+  if (exam.startsAt && new Date(exam.startsAt).getTime() > now) return "scheduled";
+  return "live";
+}
+
+function formatExamWindow(exam: TeacherMockExam) {
+  const format = (value: string) =>
+    new Date(value).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  if (exam.startsAt && exam.endsAt) return `${format(exam.startsAt)} - ${format(exam.endsAt)}`;
+  if (exam.startsAt) return `Opens ${format(exam.startsAt)}`;
+  if (exam.endsAt) return `Until ${format(exam.endsAt)}`;
+  return "Always open";
+}
+
+function QuestionStatusBadge({ status }: { status: QuizStatus }) {
+  return (
+    <span
+      className={cn(
+        "rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest ring-1 ring-inset",
+        isQuizStatus(status, "pending")
+          ? "bg-amber-500/10 text-amber-600 ring-amber-500/25"
+          : isQuizStatus(status, "approved")
+            ? "bg-emerald-500/10 text-emerald-600 ring-emerald-500/25"
+            : isQuizStatus(status, "rejected")
+              ? "bg-rose-500/10 text-rose-600 ring-rose-500/25"
+              : "bg-accent-purple/[0.06] text-slate-600 ring-accent-purple/15",
+      )}
+    >
+      {status}
+    </span>
+  );
+}
+
+// Matches the server's transcript limit for quiz generation.
+const AI_TRANSCRIPT_LIMIT = 60_000;
 
 const EMPTY_EXAM_FORM: MockExamFormState = {
   title: "",
@@ -268,6 +383,7 @@ export function TeacherConsole() {
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [publishedQuizzes, setPublishedQuizzes] = useState<Quiz[]>([]);
   const [studentProgress, setStudentProgress] = useState<StudentProgress[]>([]);
+  const [adaptiveLevels, setAdaptiveLevels] = useState<StudentAdaptiveLevels[]>([]);
   const [myAssignments, setMyAssignments] = useState<TeacherAssignment[]>([]);
 
   const [editingLectureId, setEditingLectureId] = useState<string | null>(null);
@@ -317,15 +433,34 @@ export function TeacherConsole() {
   const [aiMockCourseId, setAiMockCourseId] = useState("");
   const [aiMockTopic, setAiMockTopic] = useState("");
   const [aiMockQuestionCount, setAiMockQuestionCount] = useState(5);
+  const [aiResult, setAiResult] = useState<AiGenerationResult | null>(null);
+  // Questions from the most recent generation, highlighted in the AI question list.
+  const [latestAiQuestionIds, setLatestAiQuestionIds] = useState<string[]>([]);
+  const [aiExamForm, setAiExamForm] = useState({
+    courseId: "",
+    title: "",
+    topic: "",
+    questionCount: 10,
+    hasTimer: false,
+    durationMinutes: "15",
+  });
   const [mockExams, setMockExams] = useState<TeacherMockExam[]>([]);
   const [examForm, setExamForm] = useState<MockExamFormState>(EMPTY_EXAM_FORM);
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
   const [expandedExamId, setExpandedExamId] = useState<string | null>(null);
+  const [mockView, setMockView] = useState<"exams" | "builder" | "ai" | "questions">("exams");
+  const [examFilter, setExamFilter] = useState<"all" | ExamDisplayStatus>("all");
+  const [questionSearch, setQuestionSearch] = useState("");
+  const [questionStatusFilter, setQuestionStatusFilter] = useState<
+    "all" | "pending" | "approved" | "rejected"
+  >("all");
   const [teacherChartStats, setTeacherChartStats] = useState<{
     performanceData: { name: string; score: number }[];
     studentActivityData: { name: string; active: number }[];
     avgQuizScore: number;
   }>({ performanceData: [], studentActivityData: [], avgQuizScore: 0 });
+  // Charts show a skeleton until the first load, and an error only if they never loaded.
+  const [chartStatus, setChartStatus] = useState<"loading" | "ready" | "error">("loading");
 
   const showStatusMessage = (message: string) => {
     toast.success(message);
@@ -365,6 +500,11 @@ export function TeacherConsole() {
     setMockExams(mockExamsData);
     setStudentProgress(progressData);
     setTeacherChartStats(statsData);
+    setChartStatus("ready");
+    // Informational only, so a failure here must not block the rest of the dashboard.
+    void apiFetch<{ students: StudentAdaptiveLevels[] }>("/api/teacher/quizzes/adaptive-levels")
+      .then((data) => setAdaptiveLevels(data.students ?? []))
+      .catch(() => undefined);
 
     const assignments = assignmentData.assignments ?? [];
     setMyAssignments(assignments);
@@ -409,6 +549,7 @@ export function TeacherConsole() {
     void loadAll().catch((err) => {
       console.error("Failed to fetch teacher data:", err);
       toast.error("Failed to load teacher workspace.");
+      setChartStatus((current) => (current === "ready" ? current : "error"));
     });
   }, [ready, isApproved]);
 
@@ -523,6 +664,49 @@ export function TeacherConsole() {
     () => publishedQuizzes.filter((quiz) => !quiz.lectureId),
     [publishedQuizzes],
   );
+
+  const aiQuestions = useMemo(
+    () =>
+      mockQuestions
+        .filter((quiz) => Boolean(quiz.aiPrompt))
+        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")),
+    [mockQuestions],
+  );
+
+  const examsWithStatus = useMemo(() => {
+    const now = Date.now();
+    return mockExams.map((exam) => ({ exam, displayStatus: getExamDisplayStatus(exam, now) }));
+  }, [mockExams]);
+
+  const examCounts = useMemo(() => {
+    const counts: Record<ExamDisplayStatus, number> = { live: 0, scheduled: 0, draft: 0, ended: 0 };
+    examsWithStatus.forEach((entry) => {
+      counts[entry.displayStatus] += 1;
+    });
+    return counts;
+  }, [examsWithStatus]);
+
+  const pickerQuestions = useMemo(() => {
+    const term = questionSearch.trim().toLowerCase();
+    return mockQuestions.filter(
+      (quiz) =>
+        !isQuizStatus(quiz.status, "rejected") &&
+        (!term ||
+          quiz.question.toLowerCase().includes(term) ||
+          (quiz.topic ?? "").toLowerCase().includes(term)),
+    );
+  }, [mockQuestions, questionSearch]);
+
+  const bankQuestions = useMemo(() => {
+    const term = questionSearch.trim().toLowerCase();
+    return mockQuestions.filter(
+      (quiz) =>
+        (questionStatusFilter === "all" || isQuizStatus(quiz.status, questionStatusFilter)) &&
+        (!term ||
+          quiz.question.toLowerCase().includes(term) ||
+          (quiz.topic ?? "").toLowerCase().includes(term)),
+    );
+  }, [mockQuestions, questionSearch, questionStatusFilter]);
 
   const filteredStudents = useMemo(() => {
     const students = users.filter((user) => user.role === "STUDENT");
@@ -1109,46 +1293,121 @@ export function TeacherConsole() {
     }
   };
 
-  const handleCreateAiMock = async () => {
-    if (!aiMockCourseId) {
-      showErrorMessage("Choose a course first.");
-      return;
-    }
-
-    const courseLectures = lectures.filter(
-      (lecture) => lecture.courseId === aiMockCourseId,
-    );
-    const combinedTranscript = courseLectures
+  // Generates mock questions (saved as pending in the question bank) from a course's lecture
+  // transcripts. Throws with a message the teacher can act on when nothing could be generated.
+  const generateAiQuestions = async (courseId: string, topic: string, questionCount: number) => {
+    if (!courseId) throw new Error("Choose a course first.");
+    const combinedTranscript = lectures
+      .filter((lecture) => lecture.courseId === courseId)
       .map((lecture) => lecture.transcript ?? "")
       .join("\n\n")
       .trim();
-
     if (!combinedTranscript) {
-      showErrorMessage(
-        "This course has no lecture transcript yet. Generate one before building an AI mock exam.",
+      throw new Error(
+        "This course has no lecture transcript yet. Generate one for its lectures before using AI to build mock questions.",
       );
+    }
+
+    const result = await apiFetch<{ questions: Quiz[] }>("/api/teacher/quizzes/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        topic: topic.trim() || courses.find((course) => course.id === courseId)?.title || "Mock Exam",
+        // The server rejects transcripts over this size; the start of the course is enough context.
+        transcript: combinedTranscript.slice(0, AI_TRANSCRIPT_LIMIT),
+        questionCount,
+      }),
+    });
+    if (!result.questions?.length) {
+      throw new Error("The AI did not return any questions. Try again or adjust the topic.");
+    }
+    setLatestAiQuestionIds(result.questions.map((question) => question.id));
+    return result.questions;
+  };
+
+  const handleCreateAiMock = async () => {
+    setIsProcessing(true);
+    try {
+      const questions = await generateAiQuestions(aiMockCourseId, aiMockTopic, aiMockQuestionCount);
+      await loadAll();
+      setAiResult({ ok: true, kind: "questions", questions });
+    } catch (error) {
+      setAiResult({
+        ok: false,
+        kind: "questions",
+        error: error instanceof Error ? error.message : "Failed to generate AI questions.",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  /** "publish" makes the exam live straight away; "review" prepares it in the builder first. */
+  const handleGenerateAiExam = async (mode: "publish" | "review") => {
+    const minutes = Number(aiExamForm.durationMinutes);
+    if (aiExamForm.hasTimer && (!minutes || minutes <= 0)) {
+      setAiResult({ ok: false, kind: "exam", error: "Enter a valid timer duration in minutes." });
       return;
     }
+    const topic = aiExamForm.topic.trim();
+    const courseTitle = courses.find((course) => course.id === aiExamForm.courseId)?.title;
+    const title = aiExamForm.title.trim() || `${topic || courseTitle || "AI"} Mock Exam`;
+    const description = topic ? `AI-generated exam on ${topic}.` : "";
 
     setIsProcessing(true);
     try {
-      await apiFetch("/api/teacher/quizzes/generate", {
+      const questions = await generateAiQuestions(
+        aiExamForm.courseId,
+        aiExamForm.topic,
+        aiExamForm.questionCount,
+      );
+      const questionIds = questions.map((question) => question.id);
+
+      if (mode === "review") {
+        await loadAll();
+        setEditingExamId(null);
+        setExamForm({
+          ...EMPTY_EXAM_FORM,
+          title,
+          description,
+          courseId: aiExamForm.courseId,
+          hasTimer: aiExamForm.hasTimer,
+          durationMinutes: aiExamForm.hasTimer ? String(minutes) : EMPTY_EXAM_FORM.durationMinutes,
+          questionIds,
+        });
+        setQuestionSearch("");
+        setAiResult({ ok: true, kind: "exam-review", title, questions });
+        return;
+      }
+
+      const exam = await apiFetch<TeacherMockExam>("/api/teacher/mock-exams", {
         method: "POST",
         body: JSON.stringify({
-          topic:
-            aiMockTopic ||
-            courses.find((course) => course.id === aiMockCourseId)?.title ||
-            "Mock Exam",
-          transcript: combinedTranscript,
-          questionCount: aiMockQuestionCount,
+          title,
+          description: description || undefined,
+          courseId: aiExamForm.courseId || undefined,
+          durationSeconds: aiExamForm.hasTimer ? minutes * 60 : undefined,
+          questionIds,
         }),
       });
+      let publishError: string | undefined;
+      try {
+        await apiFetch(`/api/teacher/mock-exams/${exam.id}/publish`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+      } catch (error) {
+        publishError = error instanceof Error ? error.message : "Failed to publish mock exam.";
+      }
       await loadAll();
-      showStatusMessage("AI mock exam questions generated.");
+      setExpandedExamId(exam.id);
+      setAiExamForm((current) => ({ ...current, title: "", topic: "" }));
+      setAiResult({ ok: true, kind: "exam-published", title, examId: exam.id, questions, publishError });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to generate AI mock exam.";
-      showErrorMessage(message);
+      setAiResult({
+        ok: false,
+        kind: "exam",
+        error: error instanceof Error ? error.message : "Failed to generate the AI exam.",
+      });
     } finally {
       setIsProcessing(false);
     }
@@ -1168,9 +1427,29 @@ export function TeacherConsole() {
     setEditingExamId(null);
   };
 
+  const startNewExam = () => {
+    resetExamForm();
+    setQuestionSearch("");
+    setMockView("builder");
+  };
+
+  const selectAllPickerQuestions = () => {
+    setExamForm((current) => ({
+      ...current,
+      questionIds: [
+        ...current.questionIds,
+        ...pickerQuestions
+          .map((quiz) => quiz.id)
+          .filter((id) => !current.questionIds.includes(id)),
+      ],
+    }));
+  };
+
   const handleEditMockExam = (exam: TeacherMockExam) => {
     setEditingExamId(exam.id);
     setExpandedExamId(exam.id);
+    setQuestionSearch("");
+    setMockView("builder");
     setExamForm({
       title: exam.title,
       description: exam.description ?? "",
@@ -1180,12 +1459,8 @@ export function TeacherConsole() {
         ? String(Math.round(exam.durationSeconds / 60))
         : "10",
       hasTimeFrame: !!(exam.startsAt || exam.endsAt),
-      startsAt: exam.startsAt
-        ? new Date(exam.startsAt).toISOString().slice(0, 16)
-        : "",
-      endsAt: exam.endsAt
-        ? new Date(exam.endsAt).toISOString().slice(0, 16)
-        : "",
+      startsAt: exam.startsAt ? toDateTimeLocal(exam.startsAt) : "",
+      endsAt: exam.endsAt ? toDateTimeLocal(exam.endsAt) : "",
       questionIds: (exam.questions ?? []).map((q) => q.id),
     });
   };
@@ -1235,21 +1510,47 @@ export function TeacherConsole() {
 
     setIsProcessing(true);
     try {
-      if (editingExamId) {
-        await apiFetch(`/api/teacher/mock-exams/${editingExamId}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        });
-        showStatusMessage("Mock exam updated.");
-      } else {
-        await apiFetch("/api/teacher/mock-exams", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        showStatusMessage("Mock exam created.");
+      const saved = editingExamId
+        ? await apiFetch<TeacherMockExam>(`/api/teacher/mock-exams/${editingExamId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          })
+        : await apiFetch<TeacherMockExam>("/api/teacher/mock-exams", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+
+      // Saving publishes the exam straight to students; there is no separate draft step.
+      let publishError: string | null = null;
+      if (saved.status !== "published") {
+        try {
+          await apiFetch(`/api/teacher/mock-exams/${saved.id}/publish`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+        } catch (error) {
+          publishError = error instanceof Error ? error.message : "Failed to publish mock exam.";
+        }
       }
+
       await loadAll();
       resetExamForm();
+      setExpandedExamId(saved.id);
+      setExamFilter("all");
+      setMockView("exams");
+      // The exam list only mounts once the view switches, so scroll after that render.
+      window.requestAnimationFrame(() =>
+        document
+          .getElementById("teacher-mock-exam-list")
+          ?.scrollIntoView?.({ behavior: "smooth", block: "start" }),
+      );
+      if (publishError) {
+        showErrorMessage(`Mock exam saved but not published: ${publishError}`);
+      } else {
+        showStatusMessage(
+          editingExamId ? "Mock exam updated and live for students." : "Mock exam published to students.",
+        );
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to save mock exam.";
@@ -1325,6 +1626,135 @@ export function TeacherConsole() {
     >
       <div className="flex flex-col gap-6">
         <PendingApprovalBanner roleLabel="teacher" isApproved={isApproved} />
+
+      {aiResult ? (
+        <Dialog
+          label={aiResult.ok ? "AI generation complete" : "AI generation failed"}
+          onClose={() => setAiResult(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm"
+        >
+          <div className="motion-pop w-full max-w-lg rounded-2xl border border-accent-purple/15 bg-ink-900 p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <span
+                className={cn(
+                  "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl",
+                  aiResult.ok && !aiResult.publishError
+                    ? "bg-emerald-500/15 text-emerald-600"
+                    : aiResult.ok
+                      ? "bg-amber-500/15 text-amber-600"
+                      : "bg-rose-500/15 text-rose-600",
+                )}
+              >
+                {aiResult.ok ? <Sparkles size={20} /> : <ShieldAlert size={20} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-bold text-white">
+                  {!aiResult.ok
+                    ? aiResult.kind === "exam"
+                      ? "Couldn't generate the exam"
+                      : "Couldn't generate questions"
+                    : aiResult.kind === "exam-published"
+                      ? aiResult.publishError
+                        ? "Exam generated, but not published"
+                        : "Exam generated and published"
+                      : aiResult.kind === "exam-review"
+                        ? "Exam generated, ready to review"
+                        : "Questions generated"}
+                </h2>
+                <p className="mt-1 text-sm leading-relaxed text-slate-500">
+                  {!aiResult.ok
+                    ? aiResult.error
+                    : aiResult.kind === "exam-published"
+                      ? aiResult.publishError
+                        ? `"${aiResult.title}" was saved as a draft with ${aiResult.questions.length} questions. ${aiResult.publishError}`
+                        : `"${aiResult.title}" is live for students with ${aiResult.questions.length} questions.`
+                      : aiResult.kind === "exam-review"
+                        ? `"${aiResult.title}" has ${aiResult.questions.length} questions. Open the builder to check them, then publish.`
+                        : `${aiResult.questions.length} questions were added to the question bank.`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAiResult(null)}
+                aria-label="Close dialog"
+                className="rounded-lg px-2 py-1 text-slate-500 hover:text-rose-600"
+              >
+                ×
+              </button>
+            </div>
+
+            {aiResult.ok ? (
+              <ol className="mt-4 max-h-56 space-y-2 overflow-y-auto rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-3">
+                {aiResult.questions.slice(0, 5).map((question, index) => (
+                  <li key={question.id} className="text-xs font-semibold text-slate-300">
+                    {index + 1}. {question.question}
+                  </li>
+                ))}
+                {aiResult.questions.length > 5 ? (
+                  <li className="text-xs text-slate-500">
+                    + {aiResult.questions.length - 5} more
+                  </li>
+                ) : null}
+              </ol>
+            ) : null}
+
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row-reverse">
+              {!aiResult.ok ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={isProcessing}
+                  onClick={() => {
+                    const kind = aiResult.kind;
+                    setAiResult(null);
+                    setMockView("ai");
+                    if (kind === "questions") void handleCreateAiMock();
+                  }}
+                >
+                  {aiResult.kind === "questions" ? "Try again" : "Back to AI Generator"}
+                </Button>
+              ) : aiResult.kind === "exam-published" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setAiResult(null);
+                    setExamFilter("all");
+                    setMockView("exams");
+                  }}
+                >
+                  View exam
+                </Button>
+              ) : aiResult.kind === "exam-review" ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setAiResult(null);
+                    setMockView("builder");
+                  }}
+                >
+                  Review in builder
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setAiResult(null);
+                    setMockView("ai");
+                  }}
+                >
+                  See AI questions
+                </Button>
+              )}
+              <Button type="button" variant="outline" size="sm" onClick={() => setAiResult(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      ) : null}
 
         {pendingTabChange ? (
           <Dialog
@@ -1443,6 +1873,11 @@ export function TeacherConsole() {
             }}
             performanceData={teacherChartStats.performanceData}
             studentActivityData={teacherChartStats.studentActivityData}
+            chartStatus={chartStatus}
+            onRetry={() => {
+              setChartStatus("loading");
+              void loadAll().catch(() => setChartStatus("error"));
+            }}
           />
           </>
         ) : null}
@@ -1704,6 +2139,7 @@ export function TeacherConsole() {
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                       Segment Quiz Planner
                     </h4>
+                    <AdaptiveLearningInfo />
                     {lectureSegments.map((segment, index) => (
                       <div
                         key={`${segment.label}-${index}`}
@@ -1992,6 +2428,9 @@ export function TeacherConsole() {
                 </div>
               </div>
             ) : null}
+            <div className="mb-4 flex justify-end">
+              <AdaptiveLearningStatus />
+            </div>
             <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">
@@ -2185,306 +2624,498 @@ export function TeacherConsole() {
         ) : null}
 
         {activeTab === "mockups" ? (
-          <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="space-y-6">
-              <PremiumCard
-                eyebrow="Manual Builder"
-                title="Create Mock Exam Question"
-                description="Create teacher-authored mock questions and send them through the same review flow."
-              >
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Select
-                    value={manualMockForm.courseId}
-                    onChange={(event) =>
-                      setManualMockForm((current) => ({
-                        ...current,
-                        courseId: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Choose course...</option>
-                    {courses.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.title}
-                      </option>
-                    ))}
-                  </Select>
-                  <Select
-                    value={manualMockForm.difficulty}
-                    onChange={(event) =>
-                      setManualMockForm((current) => ({
-                        ...current,
-                        difficulty: event.target.value as ManualMockForm["difficulty"],
-                      }))
-                    }
-                  >
-                    <option value="easy">Easy</option>
-                    <option value="medium">Medium</option>
-                    <option value="hard">Hard</option>
-                  </Select>
-                </div>
-                <Input
-                  value={manualMockForm.topic}
-                  onChange={(event) =>
-                    setManualMockForm((current) => ({
-                      ...current,
-                      topic: event.target.value,
-                    }))
-                  }
-                  placeholder="Topic or subject"
-                  className="mt-4"
-                />
-                <Textarea
-                  value={manualMockForm.question}
-                  onChange={(event) =>
-                    setManualMockForm((current) => ({
-                      ...current,
-                      question: event.target.value,
-                    }))
-                  }
-                  placeholder="Write the mock exam question"
-                  className="mt-4 h-32"
-                />
-                <Textarea
-                  value={manualMockForm.options}
-                  onChange={(event) =>
-                    setManualMockForm((current) => ({
-                      ...current,
-                      options: event.target.value,
-                    }))
-                  }
-                  placeholder={"Options, one per line\nOption A\nOption B\nOption C"}
-                  className="mt-4 h-32"
-                />
-                <Input
-                  value={manualMockForm.correctAnswer}
-                  onChange={(event) =>
-                    setManualMockForm((current) => ({
-                      ...current,
-                      correctAnswer: event.target.value,
-                    }))
-                  }
-                  placeholder="Correct answer exactly as written above"
-                  className="mt-4"
-                />
-                <Button
-                  type="button"
-                  className="mt-4"
-                  onClick={handleCreateManualMock}
-                  disabled={isProcessing}
-                >
-                  Save Manual Mock Question
-                </Button>
-              </PremiumCard>
-
-              <PremiumCard
-                eyebrow="AI Builder"
-                title="Generate Mock Exam Set"
-                description="Use the lecture transcripts already in the course to generate a mock exam set."
-              >
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Select
-                    value={aiMockCourseId}
-                    onChange={(event) => setAiMockCourseId(event.target.value)}
-                  >
-                    <option value="">Choose course...</option>
-                    {courses.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.title}
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    min={3}
-                    max={10}
-                    value={aiMockQuestionCount}
-                    onChange={(event) =>
-                      setAiMockQuestionCount(Number(event.target.value))
-                    }
-                  />
-                </div>
-                <Input
-                  value={aiMockTopic}
-                  onChange={(event) => setAiMockTopic(event.target.value)}
-                  placeholder="Optional custom exam topic"
-                  className="mt-4"
-                />
-                <Button
-                  type="button"
-                  variant="solid"
-                  className="mt-4"
-                  onClick={handleCreateAiMock}
-                  disabled={isProcessing}
-                >
-                  Generate AI Mock Exam
-                </Button>
-              </PremiumCard>
-
-              <PremiumCard
-                eyebrow="Exam Builder"
-                title={editingExamId ? "Edit Mock Exam" : "Create Mock Exam"}
-                description="Group approved questions into an exam, set a timer and an availability window."
-              >
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Input
-                    value={examForm.title}
-                    onChange={(event) =>
-                      setExamForm((current) => ({
-                        ...current,
-                        title: event.target.value,
-                      }))
-                    }
-                    placeholder="Exam title, e.g. Midterm Mock 1"
-                  />
-                  <Select
-                    value={examForm.courseId}
-                    onChange={(event) =>
-                      setExamForm((current) => ({
-                        ...current,
-                        courseId: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">Course (optional)</option>
-                    {courses.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.title}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <Input
-                  value={examForm.description}
-                  onChange={(event) =>
-                    setExamForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  placeholder="Optional description shown to students"
-                  className="mt-4"
-                />
-
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4">
-                    <label className="flex cursor-pointer items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                      <input
-                        type="checkbox"
-                        checked={examForm.hasTimer}
-                        onChange={(event) =>
-                          setExamForm((current) => ({
-                            ...current,
-                            hasTimer: event.target.checked,
-                          }))
-                        }
-                        className="h-4 w-4 accent-accent-purple"
-                      />
-                      Exam timer
-                    </label>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Countdown starts when the student begins the exam.
-                    </p>
-                    <div className="mt-3 flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min={1}
-                        disabled={!examForm.hasTimer}
-                        value={examForm.durationMinutes}
-                        onChange={(event) =>
-                          setExamForm((current) => ({
-                            ...current,
-                            durationMinutes: event.target.value,
-                          }))
-                        }
-                        className={cn(!examForm.hasTimer && "opacity-40")}
-                      />
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                        minutes
-                      </span>
-                    </div>
-                    {!examForm.hasTimer ? (
-                      <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">
-                        <Hourglass size={13} />
-                        No timer - students can submit anytime
+          <div className="space-y-6">
+            <div className="glass-panel rounded-[28px] p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
+                  {(
+                    [
+                      { key: "live", label: "Live now" },
+                      { key: "scheduled", label: "Scheduled" },
+                      { key: "draft", label: "Drafts" },
+                      { key: "ended", label: "Ended" },
+                    ] as const
+                  ).map((stat) => (
+                    <button
+                      key={stat.key}
+                      type="button"
+                      onClick={() => {
+                        setMockView("exams");
+                        setExamFilter(stat.key);
+                      }}
+                      className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] px-4 py-3 text-left transition-colors hover:border-accent-purple/30"
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        {stat.label}
                       </p>
-                    ) : null}
-                  </div>
+                      <p className={cn("mt-1 text-2xl font-bold", EXAM_STATUS_STYLES[stat.key].text)}>
+                        {examCounts[stat.key]}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="solid" onClick={() => setMockView("ai")}>
+                    <Sparkles size={16} />
+                    Create with AI
+                  </Button>
+                  <Button type="button" onClick={startNewExam}>
+                    <PlusCircle size={16} />
+                    New Mock Exam
+                  </Button>
+                </div>
+              </div>
 
-                  <div className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4">
-                    <label className="flex cursor-pointer items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                      <input
-                        type="checkbox"
-                        checked={examForm.hasTimeFrame}
-                        onChange={(event) =>
-                          setExamForm((current) => ({
-                            ...current,
-                            hasTimeFrame: event.target.checked,
-                          }))
-                        }
-                        className="h-4 w-4 accent-accent-purple"
-                      />
-                      Availability window
-                    </label>
-                    <p className="mt-1 text-xs text-slate-500">
-                      The exam disappears from students after the window ends.
-                    </p>
-                    <div
+              <div
+                role="tablist"
+                aria-label="Mock exam sections"
+                className="mt-5 flex flex-wrap gap-2 border-t border-accent-purple/10 pt-4"
+              >
+                {(
+                  [
+                    { key: "exams", label: "Exams", icon: Layers, count: mockExams.length },
+                    {
+                      key: "builder",
+                      label: editingExamId ? "Edit Exam" : "Build Exam",
+                      icon: editingExamId ? Edit : PlusCircle,
+                      count: null,
+                    },
+                    { key: "ai", label: "AI Generator", icon: Sparkles, count: null },
+                    {
+                      key: "questions",
+                      label: "Question Bank",
+                      icon: FileQuestion,
+                      count: mockQuestions.length,
+                    },
+                  ] as const
+                ).map((view) => (
+                  <button
+                    key={view.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={mockView === view.key}
+                    onClick={() => setMockView(view.key)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold uppercase tracking-wider transition-colors",
+                      mockView === view.key
+                        ? "bg-accent-purple text-[#fff] shadow-glow"
+                        : "text-slate-500 hover:bg-accent-purple/[0.08] hover:text-accent-purple",
+                    )}
+                  >
+                    <view.icon size={14} />
+                    {view.label}
+                    {view.count !== null ? (
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px]",
+                          mockView === view.key ? "bg-white/20" : "bg-accent-purple/10",
+                        )}
+                      >
+                        {view.count}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {mockView === "exams" ? (
+              <div id="teacher-mock-exam-list" className="scroll-mt-24 space-y-6">
+                <div className="flex flex-wrap gap-2">
+                  {(["all", "live", "scheduled", "draft", "ended"] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setExamFilter(filter)}
                       className={cn(
-                        "mt-3 grid gap-2",
-                        !examForm.hasTimeFrame && "opacity-40",
+                        "rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest transition-colors",
+                        examFilter === filter
+                          ? "border-accent-purple bg-accent-purple/15 text-accent-purple"
+                          : "border-accent-purple/15 text-slate-500 hover:border-accent-purple/40",
                       )}
                     >
-                      <Input
-                        type="datetime-local"
-                        disabled={!examForm.hasTimeFrame}
-                        value={examForm.startsAt}
-                        onChange={(event) =>
-                          setExamForm((current) => ({
-                            ...current,
-                            startsAt: event.target.value,
-                          }))
-                        }
-                      />
-                      <Input
-                        type="datetime-local"
-                        disabled={!examForm.hasTimeFrame}
-                        value={examForm.endsAt}
-                        onChange={(event) =>
-                          setExamForm((current) => ({
-                            ...current,
-                            endsAt: event.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    {!examForm.hasTimeFrame ? (
-                      <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-emerald-600">
-                        <CalendarClock size={13} />
-                        Always available once published
-                      </p>
-                    ) : null}
-                  </div>
+                      {filter === "all" ? "All" : EXAM_STATUS_STYLES[filter].label}
+                      <span className="ml-1.5 opacity-70">
+                        {filter === "all" ? mockExams.length : examCounts[filter]}
+                      </span>
+                    </button>
+                  ))}
                 </div>
 
-                <div className="mt-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Questions in this exam
-                    </label>
-                    <span className="rounded-full bg-accent-purple/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-accent-purple">
-                      {examForm.questionIds.length} selected
-                    </span>
+                {mockExams.length === 0 ? (
+                  <div className="glass-panel flex flex-col items-center rounded-[28px] p-10 text-center">
+                    <Layers size={28} className="text-accent-purple" />
+                    <p className="mt-3 text-base font-semibold text-white">No mock exams yet</p>
+                    <p className="mt-1 max-w-sm text-sm text-slate-500">
+                      Add questions to the question bank, then build an exam from them. Saved exams
+                      are published to students straight away.
+                    </p>
+                    <div className="mt-5 flex flex-wrap justify-center gap-3">
+                      <Button type="button" onClick={() => setMockView("ai")}>
+                        <Sparkles size={16} />
+                        Generate with AI
+                      </Button>
+                      <Button type="button" variant="outline" onClick={startNewExam}>
+                        <PlusCircle size={16} />
+                        Build an exam
+                      </Button>
+                      <Button type="button" variant="outline" onClick={() => setMockView("questions")}>
+                        <FileQuestion size={16} />
+                        Add questions
+                      </Button>
+                    </div>
                   </div>
-                  <div className="mt-3 max-h-56 space-y-2 overflow-y-auto rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-3">
+                ) : null}
+
+                {EXAM_SECTION_ORDER.filter(
+                  (status) => examFilter === "all" || examFilter === status,
+                ).map((status) => {
+                  const sectionExams = examsWithStatus.filter((entry) => entry.displayStatus === status);
+                  if (sectionExams.length === 0) {
+                    return examFilter === status ? (
+                      <div
+                        key={status}
+                        className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-center text-sm text-slate-500"
+                      >
+                        No {EXAM_STATUS_STYLES[status].label.toLowerCase()} exams.
+                      </div>
+                    ) : null;
+                  }
+                  return (
+                    <section key={status} aria-label={EXAM_STATUS_STYLES[status].label}>
+                      <div className="mb-3 flex items-baseline gap-3">
+                        <h3 className={cn("text-sm font-bold uppercase tracking-widest", EXAM_STATUS_STYLES[status].text)}>
+                          {EXAM_STATUS_STYLES[status].label}
+                        </h3>
+                        <p className="text-xs text-slate-500">{EXAM_STATUS_STYLES[status].hint}</p>
+                      </div>
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        {sectionExams.map(({ exam, displayStatus }) => {
+                          const expanded = expandedExamId === exam.id;
+                          const courseTitle = exam.courseId
+                            ? courses.find((course) => course.id === exam.courseId)?.title
+                            : null;
+                          return (
+                            <div
+                              key={exam.id}
+                              className={cn(
+                                "glass-panel rounded-[24px] border-l-4 p-5",
+                                EXAM_STATUS_STYLES[displayStatus].border,
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-base font-bold text-white">{exam.title}</p>
+                                  {courseTitle ? (
+                                    <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500">
+                                      <BookOpen size={12} />
+                                      {courseTitle}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <span
+                                  className={cn(
+                                    "shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest ring-1 ring-inset",
+                                    EXAM_STATUS_STYLES[displayStatus].badge,
+                                  )}
+                                >
+                                  {EXAM_STATUS_STYLES[displayStatus].label}
+                                </span>
+                              </div>
+                              {exam.description ? (
+                                <p className="mt-2 line-clamp-2 text-xs text-slate-400">{exam.description}</p>
+                              ) : null}
+
+                              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-slate-500">
+                                <span className="flex items-center gap-1">
+                                  <FileQuestion size={12} />
+                                  {exam.questionCount} question{exam.questionCount === 1 ? "" : "s"}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  {exam.durationSeconds ? <Clock3 size={12} /> : <Hourglass size={12} />}
+                                  {exam.durationSeconds
+                                    ? `${Math.round(exam.durationSeconds / 60)} min`
+                                    : "No timer"}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  <CalendarClock size={12} />
+                                  {formatExamWindow(exam)}
+                                </span>
+                              </div>
+
+                              {displayStatus === "draft" ? (
+                                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 p-3">
+                                  <p className="flex items-center gap-2 text-xs font-semibold text-amber-700">
+                                    <Eye size={14} />
+                                    Not visible to students yet.
+                                  </p>
+                                  <Button
+                                    type="button"
+                                    variant="success"
+                                    size="sm"
+                                    onClick={() => handlePublishMockExam(exam.id)}
+                                  >
+                                    <Check size={13} />
+                                    Publish now
+                                  </Button>
+                                </div>
+                              ) : null}
+
+                              {expanded ? (
+                                <ol className="mt-4 space-y-2">
+                                  {(exam.questions ?? []).length === 0 ? (
+                                    <li className="rounded-xl border border-dashed border-accent-purple/15 p-3 text-xs text-slate-500">
+                                      No questions in this exam yet.
+                                    </li>
+                                  ) : (
+                                    (exam.questions ?? []).map((question, index) => (
+                                      <li
+                                        key={question.id}
+                                        className="flex items-start justify-between gap-3 rounded-xl bg-accent-purple/[0.06] p-3"
+                                      >
+                                        <p className="min-w-0 flex-1 text-xs font-semibold text-slate-300">
+                                          {index + 1}. {question.question}
+                                        </p>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveExamQuestion(exam.id, question.id)}
+                                          className="shrink-0 text-slate-600 transition-colors hover:text-rose-500"
+                                          aria-label="Remove question"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </li>
+                                    ))
+                                  )}
+                                </ol>
+                              ) : null}
+
+                              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-accent-purple/10 pt-3">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setExpandedExamId(expanded ? null : exam.id)}
+                                  aria-expanded={expanded}
+                                >
+                                  {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                  {expanded ? "Hide questions" : "View questions"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleEditMockExam(exam)}
+                                >
+                                  <Edit size={13} />
+                                  Edit
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="ml-auto hover:text-rose-600"
+                                  onClick={() => handleDeleteMockExam(exam.id)}
+                                >
+                                  <Trash2 size={13} />
+                                  Delete
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {mockView === "builder" ? (
+              <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+                <PremiumCard
+                  eyebrow={editingExamId ? "Editing" : "Step 1"}
+                  title={editingExamId ? "Edit exam details" : "Exam details"}
+                  description="Name the exam, then choose whether it has a timer and an availability window."
+                >
+                  <div className="space-y-4">
+                    <Input
+                      value={examForm.title}
+                      onChange={(event) =>
+                        setExamForm((current) => ({ ...current, title: event.target.value }))
+                      }
+                      placeholder="Exam title, e.g. Midterm Mock 1"
+                    />
+                    <Select
+                      value={examForm.courseId}
+                      onChange={(event) =>
+                        setExamForm((current) => ({ ...current, courseId: event.target.value }))
+                      }
+                    >
+                      <option value="">Course (optional)</option>
+                      {courses.map((course) => (
+                        <option key={course.id} value={course.id}>
+                          {course.title}
+                        </option>
+                      ))}
+                    </Select>
+                    <Textarea
+                      value={examForm.description}
+                      onChange={(event) =>
+                        setExamForm((current) => ({ ...current, description: event.target.value }))
+                      }
+                      placeholder="Optional description shown to students"
+                      className="h-20"
+                    />
+
+                    <div className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4">
+                      <label className="flex cursor-pointer items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        <input
+                          type="checkbox"
+                          checked={examForm.hasTimer}
+                          onChange={(event) =>
+                            setExamForm((current) => ({ ...current, hasTimer: event.target.checked }))
+                          }
+                          className="h-4 w-4 accent-accent-purple"
+                        />
+                        Exam timer
+                      </label>
+                      {examForm.hasTimer ? (
+                        <div className="mt-3 flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            value={examForm.durationMinutes}
+                            onChange={(event) =>
+                              setExamForm((current) => ({
+                                ...current,
+                                durationMinutes: event.target.value,
+                              }))
+                            }
+                          />
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                            minutes
+                          </span>
+                        </div>
+                      ) : null}
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                        <Hourglass size={13} />
+                        {examForm.hasTimer
+                          ? "Countdown starts when the student begins the exam."
+                          : "No timer: students can submit any time."}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4">
+                      <label className="flex cursor-pointer items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                        <input
+                          type="checkbox"
+                          checked={examForm.hasTimeFrame}
+                          onChange={(event) =>
+                            setExamForm((current) => ({ ...current, hasTimeFrame: event.target.checked }))
+                          }
+                          className="h-4 w-4 accent-accent-purple"
+                        />
+                        Availability window
+                      </label>
+                      {examForm.hasTimeFrame ? (
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Opens
+                            <Input
+                              type="datetime-local"
+                              value={examForm.startsAt}
+                              onChange={(event) =>
+                                setExamForm((current) => ({ ...current, startsAt: event.target.value }))
+                              }
+                              className="mt-1"
+                            />
+                          </label>
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            Closes
+                            <Input
+                              type="datetime-local"
+                              value={examForm.endsAt}
+                              onChange={(event) =>
+                                setExamForm((current) => ({ ...current, endsAt: event.target.value }))
+                              }
+                              className="mt-1"
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                        <CalendarClock size={13} />
+                        {examForm.hasTimeFrame
+                          ? "Students only see the exam between these times."
+                          : "Always available once published."}
+                      </p>
+                    </div>
+                  </div>
+                </PremiumCard>
+
+                <PremiumCard
+                  eyebrow={editingExamId ? "Questions" : "Step 2"}
+                  title="Choose questions"
+                  description="Pick questions from your question bank. Pending questions are approved automatically when the exam is published."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative min-w-[180px] flex-1">
+                      <Search
+                        size={14}
+                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                      />
+                      <Input
+                        value={questionSearch}
+                        onChange={(event) => setQuestionSearch(event.target.value)}
+                        placeholder="Search questions or topics"
+                        className="pl-9"
+                        aria-label="Search questions"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={selectAllPickerQuestions}
+                      disabled={pickerQuestions.length === 0}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setExamForm((current) => ({ ...current, questionIds: [] }))}
+                      disabled={examForm.questionIds.length === 0}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+
+                  <div className="mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1">
                     {mockQuestions.length === 0 ? (
-                      <p className="py-6 text-center text-sm text-slate-500">
-                        No mock questions yet. Create some with the Manual or AI
-                        builder above, then select them here.
+                      <div className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-center">
+                        <p className="text-sm text-slate-500">Your question bank is empty.</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="mt-3"
+                          onClick={() => setMockView("questions")}
+                        >
+                          <PlusCircle size={13} />
+                          Add questions
+                        </Button>
+                      </div>
+                    ) : pickerQuestions.length === 0 ? (
+                      <p className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-center text-sm text-slate-500">
+                        No questions match &ldquo;{questionSearch}&rdquo;.
                       </p>
                     ) : (
-                      mockQuestions.map((quiz) => {
-                        const selected = examForm.questionIds.includes(quiz.id);
+                      pickerQuestions.map((quiz) => {
+                        const order = examForm.questionIds.indexOf(quiz.id);
+                        const selected = order !== -1;
                         return (
                           <label
                             key={quiz.id}
@@ -2492,37 +3123,38 @@ export function TeacherConsole() {
                               "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-all",
                               selected
                                 ? "border-accent-purple bg-accent-purple/10"
-                                : "border-accent-purple/10 hover:bg-accent-purple/[0.1]",
+                                : "border-accent-purple/10 hover:bg-accent-purple/[0.08]",
                             )}
                           >
                             <input
                               type="checkbox"
                               checked={selected}
                               onChange={() => toggleExamQuestion(quiz.id)}
-                              className="mt-0.5 h-4 w-4 shrink-0 accent-accent-purple"
+                              className="sr-only"
                             />
-                            <span className="min-w-0">
-                              <span className="flex flex-wrap items-center gap-2">
-                                <span
-                                  className={cn(
-                                    "rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest",
-                                    isQuizStatus(quiz.status, "pending")
-                                      ? "bg-amber-500/10 text-amber-600"
-                                      : isQuizStatus(quiz.status, "approved")
-                                        ? "bg-emerald-500/10 text-emerald-600"
-                                        : isQuizStatus(quiz.status, "rejected")
-                                          ? "bg-rose-500/10 text-rose-600"
-                                          : "bg-accent-purple/[0.06] text-slate-600",
-                                  )}
-                                >
-                                  {quiz.status}
-                                </span>
-                                <span className="text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                "flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-[11px] font-bold",
+                                selected
+                                  ? "border-accent-purple bg-accent-purple text-[#fff]"
+                                  : "border-accent-purple/25 text-transparent",
+                              )}
+                            >
+                              {selected ? order + 1 : ""}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm font-semibold text-white">{quiz.question}</span>
+                              <span className="mt-1 flex flex-wrap items-center gap-2">
+                                <QuestionStatusBadge status={quiz.status} />
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                                   {quiz.difficulty}
                                 </span>
-                              </span>
-                              <span className="mt-1 block truncate text-sm font-semibold text-white">
-                                {quiz.question}
+                                {quiz.topic ? (
+                                  <span className="truncate text-[10px] font-bold uppercase tracking-widest text-accent-cyan">
+                                    {quiz.topic}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                           </label>
@@ -2530,279 +3162,476 @@ export function TeacherConsole() {
                       })
                     )}
                   </div>
-                  {mockQuestions.some((quiz) =>
-                    isQuizStatus(quiz.status, "pending"),
-                  ) ? (
-                    <p className="mt-2 text-xs text-slate-500">
-                      Only approved questions can be published. Pending
-                      questions are fine to include now, but approve them before
-                      publishing the exam.
-                    </p>
-                  ) : null}
-                </div>
+                </PremiumCard>
 
-                <div className="mt-5 flex gap-3">
-                  <Button
-                    type="button"
-                    onClick={handleCreateMockExam}
-                    disabled={isProcessing}
-                  >
-                    <Layers size={16} />
-                    {editingExamId ? "Update Mock Exam" : "Create Mock Exam"}
-                  </Button>
-                  {editingExamId ? (
+                <div className="glass-panel sticky bottom-4 z-10 flex flex-wrap items-center justify-between gap-3 rounded-[24px] p-4 xl:col-span-2">
+                  <p className="text-sm text-slate-500">
+                    <span className="font-bold text-white">{examForm.questionIds.length}</span> question
+                    {examForm.questionIds.length === 1 ? "" : "s"} selected
+                    {examForm.hasTimer && examForm.durationMinutes
+                      ? ` · ${examForm.durationMinutes} min timer`
+                      : ""}
+                    {" · "}published to students when saved
+                  </p>
+                  <div className="flex gap-3">
                     <Button
                       type="button"
                       variant="ghost"
-                      onClick={resetExamForm}
+                      onClick={() => {
+                        resetExamForm();
+                        setMockView("exams");
+                      }}
                       disabled={isProcessing}
                     >
                       Cancel
                     </Button>
-                  ) : null}
+                    <Button type="button" onClick={handleCreateMockExam} disabled={isProcessing}>
+                      {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                      {editingExamId ? "Update & Publish" : "Create & Publish"}
+                    </Button>
+                  </div>
                 </div>
-              </PremiumCard>
-            </div>
+              </div>
+            ) : null}
 
-            <div className="space-y-6">
-              <PremiumCard
-                eyebrow="Exam Queue"
-                title="Mock Exams"
-                description="Exams you have assembled. Publish one to make it visible to students."
-              >
-                <div className="space-y-3">
-                  {mockExams.map((exam) => {
-                    const isPublished = exam.status === "published";
-                    const expanded = expandedExamId === exam.id;
-                    const windowStart = exam.startsAt
-                      ? new Date(exam.startsAt).toLocaleString([], {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : null;
-                    const windowEnd = exam.endsAt
-                      ? new Date(exam.endsAt).toLocaleString([], {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : null;
-                    return (
+            {mockView === "ai" ? (
+              <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <PremiumCard
+                  eyebrow="Full exam"
+                  title="Generate a complete mock exam"
+                  description="AI writes the questions from the course's lecture transcripts and assembles them into an exam."
+                  accent="from-accent-purple/25 via-accent-cyan/15 to-transparent"
+                >
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Select
+                      value={aiExamForm.courseId}
+                      onChange={(event) =>
+                        setAiExamForm((current) => ({ ...current, courseId: event.target.value }))
+                      }
+                      aria-label="Course"
+                    >
+                      <option value="">Choose course...</option>
+                      {courses.map((course) => (
+                        <option key={course.id} value={course.id}>
+                          {course.title}
+                        </option>
+                      ))}
+                    </Select>
+                    <label className="flex items-center gap-3 text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Questions
+                      <Input
+                        type="number"
+                        min={3}
+                        max={30}
+                        value={aiExamForm.questionCount}
+                        onChange={(event) =>
+                          setAiExamForm((current) => ({
+                            ...current,
+                            questionCount: Math.min(30, Math.max(3, Number(event.target.value) || 3)),
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <Input
+                    value={aiExamForm.title}
+                    onChange={(event) =>
+                      setAiExamForm((current) => ({ ...current, title: event.target.value }))
+                    }
+                    placeholder="Exam title (optional, generated if left empty)"
+                    className="mt-4"
+                  />
+                  <Input
+                    value={aiExamForm.topic}
+                    onChange={(event) =>
+                      setAiExamForm((current) => ({ ...current, topic: event.target.value }))
+                    }
+                    placeholder="Focus topic (optional), e.g. Arrays and loops"
+                    className="mt-4"
+                  />
+                  <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                      <input
+                        type="checkbox"
+                        checked={aiExamForm.hasTimer}
+                        onChange={(event) =>
+                          setAiExamForm((current) => ({ ...current, hasTimer: event.target.checked }))
+                        }
+                        className="h-4 w-4 accent-accent-purple"
+                      />
+                      Exam timer
+                    </label>
+                    {aiExamForm.hasTimer ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={aiExamForm.durationMinutes}
+                          onChange={(event) =>
+                            setAiExamForm((current) => ({ ...current, durationMinutes: event.target.value }))
+                          }
+                          className="w-24"
+                          aria-label="Timer minutes"
+                        />
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">minutes</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-500">No timer: students can submit any time.</span>
+                    )}
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <Button
+                      type="button"
+                      onClick={() => handleGenerateAiExam("publish")}
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                      Generate &amp; Publish
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => handleGenerateAiExam("review")}
+                      disabled={isProcessing}
+                    >
+                      <Edit size={16} />
+                      Generate &amp; Review
+                    </Button>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">
+                    {isProcessing
+                      ? "Generating questions. This can take up to a minute..."
+                      : "Review opens the generated exam in the builder so you can swap questions before publishing."}
+                  </p>
+                </PremiumCard>
+
+                <PremiumCard
+                  eyebrow="Questions only"
+                  title="Generate questions for the bank"
+                  description="Add AI-written questions to the question bank to use in any exam later."
+                >
+                  <div className="grid gap-4 md:grid-cols-[1fr_120px]">
+                    <Select
+                      value={aiMockCourseId}
+                      onChange={(event) => setAiMockCourseId(event.target.value)}
+                    >
+                      <option value="">Choose course...</option>
+                      {courses.map((course) => (
+                        <option key={course.id} value={course.id}>
+                          {course.title}
+                        </option>
+                      ))}
+                    </Select>
+                    <Input
+                      type="number"
+                      min={3}
+                      max={10}
+                      value={aiMockQuestionCount}
+                      onChange={(event) => setAiMockQuestionCount(Number(event.target.value))}
+                      aria-label="Number of questions"
+                    />
+                  </div>
+                  <Input
+                    value={aiMockTopic}
+                    onChange={(event) => setAiMockTopic(event.target.value)}
+                    placeholder="Optional topic to focus on"
+                    className="mt-4"
+                  />
+                  <Button
+                    type="button"
+                    variant="solid"
+                    className="mt-4"
+                    onClick={handleCreateAiMock}
+                    disabled={isProcessing}
+                  >
+                    <Sparkles size={16} />
+                    Generate Questions
+                  </Button>
+                </PremiumCard>
+                <div className="xl:col-span-2">
+                  <PremiumCard
+                    eyebrow="AI Generated"
+                    title={`AI-generated questions (${aiQuestions.length})`}
+                    description="Every question written by the AI generator, newest first. Approve or reject them here, or add them to an exam from the builder."
+                  >
+                    {aiQuestions.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-center text-sm text-slate-500">
+                        No AI-generated questions yet. Generate an exam or a set of questions above.
+                      </div>
+                    ) : (
+                      <div className="grid max-h-[640px] gap-3 overflow-y-auto pr-1 lg:grid-cols-2">
+                        {aiQuestions.map((quiz) => {
+                          const isNew = latestAiQuestionIds.includes(quiz.id);
+                          return (
+                            <div
+                              key={quiz.id}
+                              className={cn(
+                                "rounded-2xl border p-4",
+                                isNew
+                                  ? "border-accent-purple/40 bg-accent-purple/10"
+                                  : "border-accent-purple/10 bg-accent-purple/[0.06]",
+                              )}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {isNew ? (
+                                    <span className="flex items-center gap-1 rounded-full bg-accent-purple px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-[#fff]">
+                                      <Sparkles size={10} />
+                                      New
+                                    </span>
+                                  ) : null}
+                                  <QuestionStatusBadge status={quiz.status} />
+                                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                    {quiz.difficulty}
+                                  </span>
+                                  <span className="truncate text-[10px] font-bold uppercase tracking-widest text-accent-cyan">
+                                    {quiz.topic?.split("|").pop() || "Mock Exam"}
+                                  </span>
+                                </div>
+                                {isQuizStatus(quiz.status, "pending") ? (
+                                  <div className="flex gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="success"
+                                      size="sm"
+                                      onClick={() => handleReview(quiz.id, "approve")}
+                                    >
+                                      Approve
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="danger"
+                                      size="sm"
+                                      onClick={() => handleReview(quiz.id, "reject")}
+                                    >
+                                      Reject
+                                    </Button>
+                                  </div>
+                                ) : null}
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-white">{quiz.question}</p>
+                              {quiz.options?.length ? (
+                                <ul className="mt-2 grid gap-1">
+                                  {quiz.options.map((option) => (
+                                    <li
+                                      key={option}
+                                      className={cn(
+                                        "flex items-center gap-1.5 text-xs",
+                                        option === quiz.correctAnswer
+                                          ? "font-semibold text-emerald-600"
+                                          : "text-slate-500",
+                                      )}
+                                    >
+                                      {option === quiz.correctAnswer ? <Check size={12} /> : <span className="w-3" />}
+                                      {option}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </PremiumCard>
+                </div>
+              </div>
+            ) : null}
+
+            {mockView === "questions" ? (
+              <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+                <div className="space-y-6">
+                  <PremiumCard
+                    eyebrow="Write"
+                    title="Add a question"
+                    description="Write your own question for the question bank."
+                  >
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <Select
+                        value={manualMockForm.courseId}
+                        onChange={(event) =>
+                          setManualMockForm((current) => ({ ...current, courseId: event.target.value }))
+                        }
+                      >
+                        <option value="">Choose course...</option>
+                        {courses.map((course) => (
+                          <option key={course.id} value={course.id}>
+                            {course.title}
+                          </option>
+                        ))}
+                      </Select>
+                      <Select
+                        value={manualMockForm.difficulty}
+                        onChange={(event) =>
+                          setManualMockForm((current) => ({
+                            ...current,
+                            difficulty: event.target.value as ManualMockForm["difficulty"],
+                          }))
+                        }
+                      >
+                        <option value="easy">Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                      </Select>
+                    </div>
+                    <Input
+                      value={manualMockForm.topic}
+                      onChange={(event) =>
+                        setManualMockForm((current) => ({ ...current, topic: event.target.value }))
+                      }
+                      placeholder="Topic or subject"
+                      className="mt-4"
+                    />
+                    <Textarea
+                      value={manualMockForm.question}
+                      onChange={(event) =>
+                        setManualMockForm((current) => ({ ...current, question: event.target.value }))
+                      }
+                      placeholder="Write the question"
+                      className="mt-4 h-24"
+                    />
+                    <Textarea
+                      value={manualMockForm.options}
+                      onChange={(event) =>
+                        setManualMockForm((current) => ({ ...current, options: event.target.value }))
+                      }
+                      placeholder={"Options, one per line\nOption A\nOption B\nOption C"}
+                      className="mt-4 h-28"
+                    />
+                    <Input
+                      value={manualMockForm.correctAnswer}
+                      onChange={(event) =>
+                        setManualMockForm((current) => ({ ...current, correctAnswer: event.target.value }))
+                      }
+                      placeholder="Correct answer exactly as written above"
+                      className="mt-4"
+                    />
+                    <Button
+                      type="button"
+                      className="mt-4"
+                      onClick={handleCreateManualMock}
+                      disabled={isProcessing}
+                    >
+                      <PlusCircle size={16} />
+                      Save Question
+                    </Button>
+                  </PremiumCard>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-4">
+                    <p className="text-sm text-slate-500">Want questions generated for you?</p>
+                    <Button type="button" variant="solid" size="sm" onClick={() => setMockView("ai")}>
+                      <Sparkles size={13} />
+                      Use the AI Generator
+                    </Button>
+                  </div>
+                </div>
+
+                <PremiumCard
+                  eyebrow="Question Bank"
+                  title={`All questions (${mockQuestions.length})`}
+                  description="Every mock exam question. Approve or reject pending ones here, or let publishing an exam approve them."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative min-w-[180px] flex-1">
+                      <Search
+                        size={14}
+                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                      />
+                      <Input
+                        value={questionSearch}
+                        onChange={(event) => setQuestionSearch(event.target.value)}
+                        placeholder="Search questions or topics"
+                        className="pl-9"
+                        aria-label="Search questions"
+                      />
+                    </div>
+                    {(["all", "pending", "approved", "rejected"] as const).map((filter) => (
+                      <button
+                        key={filter}
+                        type="button"
+                        onClick={() => setQuestionStatusFilter(filter)}
+                        className={cn(
+                          "rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest transition-colors",
+                          questionStatusFilter === filter
+                            ? "border-accent-purple bg-accent-purple/15 text-accent-purple"
+                            : "border-accent-purple/15 text-slate-500 hover:border-accent-purple/40",
+                        )}
+                      >
+                        {filter}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 max-h-[720px] space-y-3 overflow-y-auto pr-1">
+                    {bankQuestions.map((quiz) => (
                       <div
-                        key={exam.id}
+                        key={quiz.id}
                         className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4"
                       >
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={cn(
-                                "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest ring-1 ring-inset backdrop-blur-sm",
-                                isPublished
-                                  ? "bg-emerald-500/10 text-emerald-600 ring-emerald-500/25"
-                                  : "bg-amber-500/10 text-amber-600 ring-amber-500/25",
-                              )}
-                            >
-                              {exam.status}
+                            <QuestionStatusBadge status={quiz.status} />
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              {quiz.difficulty}
                             </span>
                             <span className="text-[10px] font-bold uppercase tracking-widest text-accent-cyan">
-                              {exam.questionCount} question
-                              {exam.questionCount === 1 ? "" : "s"}
+                              {quiz.topic || "Mock Exam"}
                             </span>
-                            <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                              {exam.durationSeconds ? (
-                                <>
-                                  <Clock3 size={12} />
-                                  {Math.round(exam.durationSeconds / 60)} min
-                                </>
-                              ) : (
-                                <>
-                                  <Hourglass size={12} />
-                                  No timer
-                                </>
-                              )}
-                            </span>
-                            {windowStart || windowEnd ? (
-                              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                                <CalendarClock size={12} />
-                                {windowStart && !windowEnd
-                                  ? `Opens ${windowStart}`
-                                  : !windowStart && windowEnd
-                                    ? `Until ${windowEnd}`
-                                    : windowStart && windowEnd
-                                      ? `${windowStart} - ${windowEnd}`
-                                      : "Always open"}
-                              </span>
-                            ) : null}
                           </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedExamId(expanded ? null : exam.id)
-                            }
-                            className="text-slate-500 transition-colors hover:text-white"
-                            aria-label="Toggle exam questions"
-                          >
-                            {expanded ? (
-                              <ChevronUp size={18} />
-                            ) : (
-                              <ChevronDown size={18} />
-                            )}
-                          </button>
+                          {isQuizStatus(quiz.status, "pending") ? (
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="success"
+                                size="sm"
+                                onClick={() => handleReview(quiz.id, "approve")}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="danger"
+                                size="sm"
+                                onClick={() => handleReview(quiz.id, "reject")}
+                              >
+                                Reject
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
-                        <p className="mt-3 text-sm font-bold text-white">
-                          {exam.title}
-                        </p>
-                        {exam.description ? (
-                          <p className="mt-1 text-xs text-slate-400">
-                            {exam.description}
-                          </p>
-                        ) : null}
-
-                        {expanded ? (
-                          <div className="mt-3 space-y-2">
-                            {(exam.questions ?? []).length === 0 ? (
-                              <p className="rounded-xl border border-dashed border-accent-purple/15 p-3 text-xs text-slate-500">
-                                No questions in this exam yet.
-                              </p>
-                            ) : (
-                              (exam.questions ?? []).map((question, index) => (
-                                <div
-                                  key={question.id}
-                                  className="flex items-start justify-between gap-3 rounded-xl bg-accent-purple/[0.06] p-3"
-                                >
-                                  <p className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-300">
-                                    {index + 1}. {question.question}
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleRemoveExamQuestion(exam.id, question.id)
-                                    }
-                                    className="shrink-0 text-slate-600 transition-colors hover:text-rose-500"
-                                    aria-label="Remove question"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        ) : null}
-
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {!isPublished ? (
-                            <Button
-                              type="button"
-                              variant="success"
-                              size="sm"
-                              onClick={() => handlePublishMockExam(exam.id)}
-                            >
-                              Publish
-                            </Button>
-                          ) : (
-                            <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-600">
-                              <Check size={12} />
-                              Live for students
-                            </span>
-                          )}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleEditMockExam(exam)}
-                          >
-                            <Edit size={13} />
-                            Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDeleteMockExam(exam.id)}
-                          >
-                            <Trash2 size={13} />
-                            Delete
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {mockExams.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-accent-purple/15 p-4 text-sm text-slate-500">
-                      No mock exams yet. Use the Exam Builder to assemble one.
-                    </div>
-                  ) : null}
-                </div>
-              </PremiumCard>
-
-              <PremiumCard
-                eyebrow="Question Pool"
-                title="Recent Questions"
-                description="Approve or reject the latest mock questions before adding them to an exam."
-              >
-                <div className="space-y-3">
-                  {mockQuestions.slice(0, 8).map((quiz) => (
-                    <div
-                      key={quiz.id}
-                      className="rounded-2xl border border-accent-purple/10 bg-accent-purple/[0.06] p-4"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex flex-wrap gap-2">
-                          <span
-                            className={cn(
-                              "rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
-                              isQuizStatus(quiz.status, "pending")
-                                ? "bg-amber-500/10 text-amber-600 ring-1 ring-inset ring-amber-500/25 backdrop-blur-sm"
-                                : isQuizStatus(quiz.status, "approved")
-                                  ? "bg-emerald-500/10 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 backdrop-blur-sm"
-                                  : isQuizStatus(quiz.status, "rejected")
-                                    ? "bg-rose-500/10 text-rose-600 ring-1 ring-inset ring-rose-500/25 backdrop-blur-sm"
-                                    : "bg-accent-purple/[0.06] text-slate-600",
-                            )}
-                          >
-                            {quiz.status}
-                          </span>
-                          <span className="text-[10px] font-bold uppercase tracking-widest text-accent-cyan">
-                            {quiz.topic || "Mock Exam"}
-                          </span>
-                        </div>
-                        {isQuizStatus(quiz.status, "pending") ? (
-                          <div className="flex gap-2">
-                            <Button
-                              type="button"
-                              variant="success"
-                              size="sm"
-                              onClick={() => handleReview(quiz.id, "approve")}
-                            >
-                              Approve
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="danger"
-                              size="sm"
-                              onClick={() => handleReview(quiz.id, "reject")}
-                            >
-                              Reject
-                            </Button>
-                          </div>
+                        <p className="mt-3 text-sm font-semibold text-white">{quiz.question}</p>
+                        {quiz.options?.length ? (
+                          <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                            {quiz.options.map((option) => (
+                              <li
+                                key={option}
+                                className={cn(
+                                  "flex items-center gap-1.5 text-xs",
+                                  option === quiz.correctAnswer
+                                    ? "font-semibold text-emerald-600"
+                                    : "text-slate-500",
+                                )}
+                              >
+                                {option === quiz.correctAnswer ? <Check size={12} /> : <span className="w-3" />}
+                                {option}
+                              </li>
+                            ))}
+                          </ul>
                         ) : null}
                       </div>
-                      <p className="mt-3 text-sm font-semibold text-white">
-                        {quiz.question}
-                      </p>
-                    </div>
-                  ))}
-                  {mockQuestions.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-accent-purple/15 p-4 text-sm text-slate-500">
-                      No mock exam questions created yet.
-                    </div>
-                  ) : null}
-                </div>
-              </PremiumCard>
-            </div>
+                    ))}
+                    {bankQuestions.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-accent-purple/15 p-6 text-center text-sm text-slate-500">
+                        {mockQuestions.length === 0
+                          ? "No questions yet. Write one or generate a set with AI."
+                          : "No questions match these filters."}
+                      </div>
+                    ) : null}
+                  </div>
+                </PremiumCard>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -2866,6 +3695,61 @@ export function TeacherConsole() {
                           </p>
                         </div>
                       </div>
+                      {(() => {
+                        // The same per-course levels the server picks this student's quizzes by. Courses
+                        // without recent quiz results use the starting level.
+                        const courseTitle = new Map(courses.map((course) => [course.id, course.title]));
+                        const levels =
+                          adaptiveLevels
+                            .find(
+                              (item) =>
+                                item.studentId === student.id ||
+                                item.studentId.toLowerCase() === student.email.toLowerCase(),
+                            )
+                            ?.levels.filter((item) => courseTitle.has(item.courseId)) ?? [];
+                        const rows =
+                          levels.length > 0
+                            ? levels.map((item) => ({
+                                key: item.courseId,
+                                label: courseTitle.get(item.courseId)!,
+                                level: item.level,
+                                title: `${item.averageScore}% average over the last ${item.attempts} quiz${item.attempts === 1 ? "" : "zes"} in this course.`,
+                              }))
+                            : [
+                                {
+                                  key: "default",
+                                  label: "Starting level",
+                                  level: DEFAULT_ADAPTIVE_LEVEL,
+                                  title: "No quiz results in your courses yet.",
+                                },
+                              ];
+                        return (
+                          <div className="mt-3 rounded-2xl bg-accent-purple/[0.06] px-3 py-2">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              Adaptive Level
+                            </p>
+                            <ul className="mt-2 space-y-1.5">
+                              {rows.map((row) => (
+                                <li
+                                  key={row.key}
+                                  className="flex items-center justify-between gap-3"
+                                  title={row.title}
+                                >
+                                  <span className="truncate text-xs text-slate-600">{row.label}</span>
+                                  <span
+                                    className={cn(
+                                      "shrink-0 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest",
+                                      LEVEL_BADGE_CLASS[row.level],
+                                    )}
+                                  >
+                                    {formatLevel(row.level)}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      })()}
                       <Button
                         type="button"
                         variant="outline"

@@ -160,6 +160,8 @@ export function AdminConsole() {
     userDistribution: { name: string; value: number; color: string }[];
     monthlySignups: { month: string; signups: number }[];
   }>({ userDistribution: [], monthlySignups: [] });
+  // Charts show a skeleton until the first load, and an error only if they never loaded.
+  const [chartStatus, setChartStatus] = useState<"loading" | "ready" | "error">("loading");
   const isStaffViewTab = activeTab === "users" || activeTab === "staff-view";
   const isStaffApprovalsTab = activeTab === "staff-approvals";
   const isStudentTab = activeTab === "students" || activeTab === "student-view" || activeTab === "student-performance";
@@ -254,9 +256,11 @@ export function AdminConsole() {
         userDistribution: statsData.userDistribution,
         monthlySignups: statsData.monthlySignups,
       });
+      setChartStatus("ready");
       setStaffInvitations(nextInvitations);
     } catch (error) {
       console.error("Failed to load admin data", error);
+      setChartStatus((current) => (current === "ready" ? current : "error"));
     }
   }
 
@@ -399,14 +403,14 @@ export function AdminConsole() {
       });
       showStatus(
         result.emailSent
-          ? "Staff invitation email sent."
+          ? "Teacher invitation email sent."
           : `Email failed${result.emailError ? `: ${result.emailError}` : ""}. Share this link manually: ${result.registrationLink}`,
       );
       setStaffForm({ name: "", email: "" });
       await loadAll();
       setActiveTab("staff-view");
     } catch (error) {
-      showStatus(error instanceof Error ? error.message : "Failed to send staff invitation.");
+      showStatus(error instanceof Error ? error.message : "Failed to send teacher invitation.");
     } finally {
       setIsProcessing(false);
     }
@@ -435,7 +439,7 @@ export function AdminConsole() {
       await loadAll();
     } catch (error) {
       showStatus(
-        error instanceof Error ? error.message : "Failed to resend staff invitation.",
+        error instanceof Error ? error.message : "Failed to resend teacher invitation.",
       );
     } finally {
       setIsProcessing(false);
@@ -443,7 +447,7 @@ export function AdminConsole() {
   }
 
   async function reviewStaffInvitation(invitationId: string, nextStatus: "APPROVED" | "REJECTED" | "REVISION_REQUESTED") {
-    const adminNotes = nextStatus === "APPROVED" ? "" : window.prompt("Add notes for the staff email:") || "";
+    const adminNotes = nextStatus === "APPROVED" ? "" : window.prompt("Add notes for the teacher email:") || "";
     setIsProcessing(true);
     try {
       const result = await apiFetch<{ emailSent?: boolean; emailError?: string }>(
@@ -455,13 +459,13 @@ export function AdminConsole() {
       );
       showStatus(
         result.emailSent
-          ? "Staff review updated and the applicant was notified by email."
-          : `Staff review updated, but the applicant could NOT be emailed (${result.emailError || "unknown error"}). Please tell them directly.`,
+          ? "Teacher review updated and the applicant was notified by email."
+          : `Teacher review updated, but the applicant could NOT be emailed (${result.emailError || "unknown error"}). Please tell them directly.`,
       );
       setSelectedStaffInvitation(null);
       await loadAll();
     } catch (error) {
-      showStatus(error instanceof Error ? error.message : "Failed to update staff review.");
+      showStatus(error instanceof Error ? error.message : "Failed to update teacher review.");
     } finally {
       setIsProcessing(false);
     }
@@ -481,11 +485,11 @@ export function AdminConsole() {
       if (selectedStaffInvitation?.id === invitation.id) {
         setSelectedStaffInvitation(null);
       }
-      showStatus("Pending staff invitation deleted.");
+      showStatus("Pending teacher invitation deleted.");
       await loadAll();
     } catch (error) {
       showStatus(
-        error instanceof Error ? error.message : "Failed to delete staff invitation.",
+        error instanceof Error ? error.message : "Failed to delete teacher invitation.",
       );
     } finally {
       setIsProcessing(false);
@@ -554,11 +558,16 @@ export function AdminConsole() {
             }}
             userDistribution={chartStats.userDistribution}
             monthlySignups={chartStats.monthlySignups}
+            chartStatus={chartStatus}
+            onRetry={() => {
+              setChartStatus("loading");
+              void loadAll();
+            }}
           />
         )}
 
         {activeTab === "staff-add" && (
-          <PremiumCard eyebrow="Staff" title="Add Staff" description="Send a registration link to a teacher.">
+          <PremiumCard eyebrow="Teachers" title="Add Teacher" description="Send a registration link to a teacher.">
             <form onSubmit={saveStaff} className="mt-4 max-w-2xl space-y-5">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -611,7 +620,7 @@ export function AdminConsole() {
               </div>
             </div>
 
-            <PremiumCard eyebrow="Directory" title="View Staff" description="Active teacher accounts and invitation progress.">
+            <PremiumCard eyebrow="Directory" title="View Teachers" description="Active teacher accounts and invitation progress.">
               <div className="mt-5 grid gap-4 lg:grid-cols-2">
                 {activeStaff.map((user) => (
                   <div key={user.id} className="rounded-2xl border border-accent-purple/15 bg-ink-900/70 p-5 transition hover:border-accent-cyan/30">
@@ -688,8 +697,8 @@ export function AdminConsole() {
 
                 {activeStaff.length === 0 && staffInvitations.length === 0 && (
                   <div className="col-span-full rounded-2xl border border-dashed border-accent-purple/15 p-10 text-center">
-                    <p className="text-sm font-semibold text-white">No staff records yet.</p>
-                    <p className="mt-2 text-sm text-slate-500">Use Add Staff to send your first teacher registration link.</p>
+                    <p className="text-sm font-semibold text-white">No teacher records yet.</p>
+                    <p className="mt-2 text-sm text-slate-500">Use Add Teacher to send your first teacher registration link.</p>
                   </div>
                 )}
               </div>
@@ -727,7 +736,7 @@ export function AdminConsole() {
               </div>
             </div>
 
-            <PremiumCard eyebrow="Review Queue" title="Staff Approvals" description="Review submitted profiles, documents, and admin decisions.">
+            <PremiumCard eyebrow="Review Queue" title="Teacher Approvals" description="Review submitted profiles, documents, and admin decisions.">
               <div className="mt-5 space-y-4">
                 {staffInvitations.map((invitation) => (
                   <div key={invitation.id} className="rounded-2xl border border-accent-purple/15 bg-ink-900/70 p-5">
@@ -785,7 +794,7 @@ export function AdminConsole() {
 
                 {staffInvitations.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-accent-purple/15 p-10 text-center">
-                    <p className="text-sm font-semibold text-white">No staff applications yet.</p>
+                    <p className="text-sm font-semibold text-white">No teacher applications yet.</p>
                     <p className="mt-2 text-sm text-slate-500">Submitted teacher registrations will appear here for review.</p>
                   </div>
                 )}
@@ -979,7 +988,7 @@ export function AdminConsole() {
                 <p className="mt-2 text-2xl font-bold text-white">{quizzes.length}</p>
               </div>
               <div className="rounded-2xl bg-accent-purple/[0.06] p-4">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Pending Staff</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Pending Teachers</p>
                 <p className="mt-2 text-2xl font-bold text-amber-600">
                   {pendingApprovals.length}
                 </p>
@@ -1119,11 +1128,11 @@ export function AdminConsole() {
         )}
 
         {selectedStaffUser && (
-          <Dialog label="Staff profile" onClose={() => setSelectedStaffUser(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+          <Dialog label="Teacher profile" onClose={() => setSelectedStaffUser(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
             <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-900 shadow-2xl">
               <div className="flex items-start justify-between border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Staff Profile</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Teacher Profile</p>
                   <h2 className="mt-2 text-2xl font-bold text-white">{selectedStaffUser.name}</h2>
                   <p className="mt-1 text-sm text-slate-400">Teacher account details</p>
                 </div>
@@ -1148,7 +1157,7 @@ export function AdminConsole() {
                 </div>
                 <StaffCoursesPanel assignments={staffCourseAssignments} loading={staffCoursesLoading} />
                 <div className="rounded-xl border border-amber-500/15 bg-amber-500/[0.05] p-4 text-sm text-amber-200">
-                  This staff account has no linked registration application, so personal, educational, and document details are unavailable.
+                  This teacher account has no linked registration application, so personal, educational, and document details are unavailable.
                 </div>
               </div>
             </div>
@@ -1156,11 +1165,11 @@ export function AdminConsole() {
         )}
 
         {selectedStaffInvitation && (
-          <Dialog label="Staff application" onClose={() => setSelectedStaffInvitation(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+          <Dialog label="Teacher application" onClose={() => setSelectedStaffInvitation(null)} className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
             <div className="max-h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-accent-purple/15 bg-ink-950 shadow-2xl">
               <div className="flex items-start justify-between gap-4 border-b border-accent-purple/15 bg-gradient-to-r from-accent-purple/10 to-accent-cyan/10 p-6">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Staff Application</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.3em] text-accent-purple">Teacher Application</p>
                   <h2 className="mt-2 text-2xl font-bold text-white">{selectedStaffInvitation.name}</h2>
                   <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-400">
                     <span>{selectedStaffInvitation.email}</span>
@@ -1344,7 +1353,7 @@ function StaffCoursesPanel({ assignments, loading }: { assignments: StaffCourseA
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-accent-purple/15 py-7 text-center text-sm text-slate-500">
-          No courses are assigned to this staff member.
+          No courses are assigned to this teacher.
         </div>
       )}
     </div>

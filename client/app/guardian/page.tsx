@@ -11,6 +11,15 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { ProgressBar } from "@/components/charts/chart-states";
+import { SCORE_STATUS } from "@/lib/chart-theme";
+
+/** Same bands as the subject advice this page shows (below 50 at risk, below 80 building mastery). */
+function subjectTone(score: number) {
+  if (score < 50) return SCORE_STATUS["needs-work"].color;
+  if (score < 80) return SCORE_STATUS.fair.color;
+  return SCORE_STATUS.strong.color;
+}
 import { CheckCircle2, XCircle, PlayCircle, ShieldAlert } from "lucide-react";
 
 type DashboardData = {
@@ -197,14 +206,12 @@ export default function GuardianPage() {
                     description="Average Quiz Accuracy"
                     accent="from-cyan-500/20 to-transparent"
                   >
-                    <div className="mt-3 h-2 w-full rounded-full bg-accent-purple/[0.06]">
-                      <div
-                        className="h-2 rounded-full bg-gradient-to-r from-accent-purple to-accent-cyan"
-                        style={{
-                          width: `${Math.min(100, progress?.avgScore ?? 0)}%`,
-                        }}
-                      />
-                    </div>
+                    <ProgressBar
+                      className="mt-0"
+                      trackClassName="mt-3"
+                      value={progress ? progress.avgScore : null}
+                      label="Average quiz accuracy"
+                    />
                   </PremiumCard>
                   <PremiumCard
                     eyebrow="Consistency"
@@ -406,35 +413,26 @@ export default function GuardianPage() {
                             <p className="text-xs uppercase tracking-widest text-slate-500">
                               Score
                             </p>
-                            <p
-                              className={cn(
-                                "text-2xl font-bold",
-                                course.avgScore < 50
-                                  ? "text-rose-600"
-                                  : course.avgScore < 80
-                                    ? "text-amber-600"
-                                    : "text-emerald-600",
-                              )}
-                            >
-                              {course.avgScore}%
-                            </p>
+                            {course.attemptCount > 0 ? (
+                              <p
+                                className="text-2xl font-bold tabular-nums"
+                                style={{ color: subjectTone(course.avgScore) }}
+                              >
+                                {course.avgScore}%
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-sm font-semibold text-slate-400">
+                                No quizzes yet
+                              </p>
+                            )}
                           </div>
                         </div>
-                        <div className="mt-3 h-2 rounded-full bg-accent-purple/[0.06]">
-                          <div
-                            className={cn(
-                              "h-2 rounded-full",
-                              course.avgScore < 50
-                                ? "bg-rose-500"
-                                : course.avgScore < 80
-                                  ? "bg-amber-400"
-                                  : "bg-gradient-to-r from-emerald-400 to-cyan-400",
-                            )}
-                            style={{
-                              width: `${Math.min(100, course.avgScore)}%`,
-                            }}
-                          />
-                        </div>
+                        <ProgressBar
+                          trackClassName="mt-3"
+                          value={course.attemptCount > 0 ? course.avgScore : null}
+                          color={course.attemptCount > 0 ? subjectTone(course.avgScore) : undefined}
+                          label={`${course.title} average score`}
+                        />
                         <div className="mt-3 flex gap-3 text-xs text-slate-400">
                           <span>
                             {course.attemptCount} attempt

@@ -19,6 +19,7 @@ import {
   savePortalSession,
   type PortalSession,
 } from "@/lib/session";
+import { AIAssistant } from "@/components/ai-assistant/ai-assistant";
 
 type MeProfile = {
   id: string;
@@ -164,7 +165,8 @@ export default function ProfilePage() {
 
   return (
     <div className="min-h-screen page-canvas text-slate-800">
-      <div className="mx-auto max-w-4xl px-6 py-10">
+      <AIAssistant />
+      <div className="mx-auto max-w-4xl px-6 py-10 pb-28">
         <Link
           href={dashboardPath}
           className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-900"

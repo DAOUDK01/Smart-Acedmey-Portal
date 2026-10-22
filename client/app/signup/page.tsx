@@ -8,6 +8,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { Panel } from "@/components/ui/panel";
+import { SignInProgress, type SignInPhase } from "@/components/ui/sign-in-progress";
 import { cn } from "@/lib/utils";
 import MaintenanceScreen from "@/components/maintenance-screen";
 import { useMaintenance } from "@/lib/use-maintenance";
@@ -19,12 +20,14 @@ export default function SignupPage(){
   const [classes,setClasses]=useState<CatalogClass[]>([]);
   const [name,setName]=useState("");const [email,setEmail]=useState("");const [classId,setClassId]=useState("");const [courseIds,setCourseIds]=useState<string[]>([]);
   const [status,setStatus]=useState<string|null>(null);const [busy,setBusy]=useState(false);
+  // Visual only: the bar runs while the request is in flight and completes when it is accepted.
+  const [progressPhase,setProgressPhase]=useState<SignInPhase>("idle");
 
   useEffect(()=>{fetch(`${API_BASE_URL}/api/admissions/catalog`).then(r=>r.json()).then(setClasses).catch(()=>setStatus("Admission catalog could not be loaded."));},[]);
 
   const selectedClass=useMemo(()=>classes.find(item=>item.id===classId),[classes,classId]);
 
-  async function submit(event:FormEvent){event.preventDefault();setBusy(true);setStatus(null);try{const response=await fetch(`${API_BASE_URL}/api/admissions/request`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,email,desiredClassId:classId,selectedCourseIds:courseIds})});const data=await response.json().catch(()=>null);if(!response.ok)throw new Error(Array.isArray(data?.message)?data.message.join(", "):data?.message||"Request failed");setName("");setEmail("");setClassId("");setCourseIds([]);setStatus(data?.emailSent?"Admission request submitted. We have emailed you a confirmation, and you will receive another email with your registration link after admin review.":"Admission request submitted. You will receive an email with your registration link after admin review. (We could not send the confirmation email just now — please check the address you entered.)");}catch(error){setStatus(error instanceof Error?error.message:"Admission request failed.");}finally{setBusy(false);}}
+  async function submit(event:FormEvent){event.preventDefault();setBusy(true);setStatus(null);setProgressPhase("verifying");try{const response=await fetch(`${API_BASE_URL}/api/admissions/request`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,email,desiredClassId:classId,selectedCourseIds:courseIds})});const data=await response.json().catch(()=>null);if(!response.ok)throw new Error(Array.isArray(data?.message)?data.message.join(", "):data?.message||"Request failed");setProgressPhase("success");window.setTimeout(()=>setProgressPhase("idle"),1200);setName("");setEmail("");setClassId("");setCourseIds([]);setStatus(data?.emailSent?"Admission request submitted. We have emailed you a confirmation, and you will receive another email with your registration link after admin review.":"Admission request submitted. You will receive an email with your registration link after admin review. (We could not send the confirmation email just now — please check the address you entered.)");}catch(error){setProgressPhase("idle");setStatus(error instanceof Error?error.message:"Admission request failed.");}finally{setBusy(false);}}
 
   function toggleCourse(id:string){setCourseIds(current=>current.includes(id)?current.filter(item=>item!==id):[...current,id]);}
 
@@ -54,6 +57,7 @@ export default function SignupPage(){
           {!selectedClass.courses.length&&<Alert variant="neutral">No courses are currently offered in this class.</Alert>}
         </div>}
         <Button fullWidth type="submit" disabled={busy||!courseIds.length}>{busy?"Submitting...":"Request Admission"}</Button>
+        <SignInProgress phase={progressPhase} label="Submitting admission request" successMessage="Admission request submitted."/>
       </form>
       {status&&<Alert variant="info" className="mt-5">{status}</Alert>}
       <p className="mt-6 text-center text-sm text-slate-500">Already have an account? <Link href="/login" className="text-cyan-600 hover:text-cyan-700">Sign in</Link></p>

@@ -180,7 +180,7 @@ export class MockExamService {
     const exam = await this.prisma.mockExam.findUnique({
       where: { id },
       include: {
-        questions: { select: { question: { select: { status: true } } } },
+        questions: { select: { question: { select: { id: true, status: true } } } },
       },
     });
     if (!exam) {
@@ -194,20 +194,43 @@ export class MockExamService {
         "Add at least one question to the exam before publishing.",
       );
     }
-    const notApproved = exam.questions.filter(
-      (entry) => entry.question.status !== QuizStatus.APPROVED,
+    const rejected = exam.questions.filter(
+      (entry) => entry.question.status === QuizStatus.REJECTED,
     );
-    if (notApproved.length > 0) {
+    if (rejected.length > 0) {
       throw new BadRequestException(
-        `${notApproved.length} question${notApproved.length > 1 ? "s are" : " is"} not approved yet. Approve all questions before publishing.`,
+        `${rejected.length} question${rejected.length > 1 ? "s were" : " was"} rejected. Remove ${rejected.length > 1 ? "them" : "it"} from the exam before publishing.`,
       );
     }
 
-    const updated = await this.prisma.mockExam.update({
-      where: { id },
-      data: { status: MockExamStatus.PUBLISHED, publishedAt: new Date() },
-      include: this.questionInclude,
-    });
+    // Publishing is the teacher's sign-off on the questions they put in the exam, so pending
+    // questions are approved here (the same transition as the teacher's Approve action) instead of
+    // leaving the exam stuck as a draft that students never see.
+    const pendingIds = exam.questions
+      .filter(
+        (entry) =>
+          entry.question.status === QuizStatus.PENDING ||
+          entry.question.status === QuizStatus.EDITED,
+      )
+      .map((entry) => entry.question.id);
+    const now = new Date();
+
+    const [, updated] = await this.prisma.$transaction([
+      this.prisma.quizQuestion.updateMany({
+        where: { id: { in: pendingIds } },
+        data: {
+          status: QuizStatus.APPROVED,
+          reviewedBy: "Teacher",
+          reviewedAt: now,
+          publishedAt: now,
+        },
+      }),
+      this.prisma.mockExam.update({
+        where: { id },
+        data: { status: MockExamStatus.PUBLISHED, publishedAt: now },
+        include: this.questionInclude,
+      }),
+    ]);
     return serializeMockExam(updated);
   }
 

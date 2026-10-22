@@ -76,13 +76,23 @@ export class StudentQuizController {
   constructor(private readonly quizService: QuizService) {}
 
   @Get("questions")
-  listQuizQuestions() {
-    return this.quizService.listQuizQuestionsByStatus(QuizStatus.APPROVED);
+  listQuizQuestions(@Req() req: { user?: AuthenticatedUser }) {
+    return this.quizService.listAdaptiveQuizQuestionsForStudent(req.user);
+  }
+
+  @Get("level/me")
+  getMyAdaptiveLevels(@Req() req: { user?: AuthenticatedUser }) {
+    return this.quizService.getAdaptiveLevelsForStudent(req.user);
   }
 
   @Get("attempts/me")
   listMyAnsweredQuizIds(@Req() req: { user?: AuthenticatedUser }) {
     return this.quizService.listAnsweredQuizIds(req.user);
+  }
+
+  @Get("history/me")
+  listMyAttemptHistory(@Req() req: { user?: AuthenticatedUser }) {
+    return this.quizService.listMyAttemptHistory(req.user);
   }
 
   @Get("mock-exams")
@@ -114,6 +124,11 @@ export class TeacherQuizController {
   @Get()
   listQuizQuestions() {
     return this.quizService.listQuizQuestions();
+  }
+
+  @Get("adaptive-levels")
+  getAdaptiveLevels() {
+    return this.quizService.getAdaptiveLevelsForAllStudents();
   }
 
   @Get("approved")

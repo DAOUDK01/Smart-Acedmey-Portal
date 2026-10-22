@@ -120,9 +120,45 @@ h4 {
   animation: pop-in 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
+/* Children rise in one after another (cards in a dashboard grid). */
+.motion-stagger > * {
+  /* `backwards`, not `both`: a held end-state transform would block the cards' hover lift. */
+  animation: rise-in 520ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.motion-stagger > :nth-child(2) { animation-delay: 50ms; }
+.motion-stagger > :nth-child(3) { animation-delay: 100ms; }
+.motion-stagger > :nth-child(4) { animation-delay: 150ms; }
+.motion-stagger > :nth-child(5) { animation-delay: 200ms; }
+.motion-stagger > :nth-child(6) { animation-delay: 250ms; }
+.motion-stagger > :nth-child(n + 7) { animation-delay: 300ms; }
+
+/* Toast countdown: shrinks from full width to nothing over the toast's lifetime. */
+.toast-countdown {
+  transform-origin: left center;
+  animation: toast-countdown linear forwards;
+}
+
+/* Moving shine on an in-progress bar (sign-in / sign-up). */
+.progress-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: progress-shimmer 1.2s ease-in-out infinite;
+}
+
+/* Keyboard focus is always visible; components with their own focus ring override this. */
+:where(a, button, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid rgba(124, 58, 237, 0.45);
+  outline-offset: 2px;
+}
+
 /* ---------- Water crystal glass (iOS 26 Liquid Glass) ---------- */
-.glass-panel {
+/* Default position only: `:where()` has no specificity, so positioning utilities
+   (absolute / fixed / sticky) on the same element take effect. */
+:where(.glass-panel) {
   position: relative;
+}
+
+.glass-panel {
   border: 1px solid rgba(255, 255, 255, 0.9);
   background: linear-gradient(
     150deg,
@@ -133,8 +169,8 @@ h4 {
     0 16px 48px rgba(15, 23, 42, 0.10),
     inset 0 2px 2px rgba(255, 255, 255, 0.95),
     inset 0 -8px 16px rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(32px) saturate(1.8);
-  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
 }
 
 .glass-panel::before {
@@ -155,8 +191,13 @@ h4 {
 
 /* Glass panel variant that stays fully readable over light content:
    nearly opaque so page text never shows through and overlaps options. */
-.glass-panel-opaque {
+/* Default position only: `:where()` has no specificity, so positioning utilities
+   (absolute / fixed / sticky) on the same element take effect. */
+:where(.glass-panel-opaque) {
   position: relative;
+}
+
+.glass-panel-opaque {
   border: 1px solid rgba(124, 58, 237, 0.18);
   background: linear-gradient(
     150deg,
@@ -166,8 +207,8 @@ h4 {
   box-shadow:
     0 10px 28px rgba(15, 23, 42, 0.08),
     inset 0 2px 2px rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(32px) saturate(1.8);
-  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
 }
 
 .glass-chip {
@@ -231,8 +272,13 @@ h4 {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
 }
 
-.surface-panel {
+/* Default position only: `:where()` has no specificity, so positioning utilities
+   (absolute / fixed / sticky) on the same element take effect. */
+:where(.surface-panel) {
   position: relative;
+}
+
+.surface-panel {
   border: 1px solid rgba(255, 255, 255, 0.9);
   background: linear-gradient(
     150deg,
@@ -243,8 +289,8 @@ h4 {
     0 16px 48px rgba(15, 23, 42, 0.10),
     inset 0 2px 2px rgba(255, 255, 255, 0.95),
     inset 0 -8px 16px rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(32px) saturate(1.8);
-  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
 }
 
 .surface-panel::before {
@@ -292,6 +338,21 @@ h4 {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes progress-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes toast-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
   }
 }
 
@@ -343,5 +404,54 @@ button {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* AI assistant mascot ("Ace"). Blink, wave and glow are inside /assistant/ace-mascot.svg;
+   these add floating, thinking and greeting motion plus hover/press feedback. */
+.ace-mascot {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ace-animated .ace-mascot-img {
+  animation: ace-float 4s ease-in-out infinite;
+}
+.ace-thinking .ace-mascot-img {
+  animation: ace-think 1.4s ease-in-out infinite;
+}
+.ace-greeting {
+  animation: ace-hop 1.2s ease-in-out 2;
+}
+.group:hover .ace-mascot {
+  transform: scale(1.06) rotate(-4deg);
+}
+.group:active .ace-mascot {
+  transform: scale(0.94);
+}
+
+@keyframes ace-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3%); }
+}
+@keyframes ace-think {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-2%) rotate(-5deg); }
+  70% { transform: translateY(-2%) rotate(5deg); }
+}
+@keyframes ace-hop {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-12%); }
+  55% { transform: translateY(0); }
+  70% { transform: translateY(-5%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ace-animated .ace-mascot-img,
+  .ace-thinking .ace-mascot-img,
+  .ace-greeting {
+    animation: none;
+  }
+  .group:hover .ace-mascot,
+  .group:active .ace-mascot {
+    transform: none;
   }
 }

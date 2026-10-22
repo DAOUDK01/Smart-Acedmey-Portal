@@ -23,6 +23,7 @@ import {
   LineChart,
   ListChecks
   ,School
+  ,CalendarCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -53,11 +54,11 @@ const sidebarItems: Record<string, SidebarItem[]> = {
     { id: "overview", name: "Overview", icon: LayoutDashboard },
     {
       id: "staff-management",
-      name: "Staff",
+      name: "Teachers",
       icon: Users,
       children: [
-        { id: "staff-add", name: "Add Staff", icon: PlusCircle },
-        { id: "staff-view", name: "View Staff", icon: UserCheck },
+        { id: "staff-add", name: "Add Teacher", icon: PlusCircle },
+        { id: "staff-view", name: "View Teachers", icon: UserCheck },
         { id: "staff-approvals", name: "Approvals", icon: ListChecks },
       ],
     },
@@ -115,6 +116,7 @@ const sidebarItems: Record<string, SidebarItem[]> = {
     { id: "exams", name: "Mock Exams", icon: FileQuestion },
     { id: "progress", name: "Performance", icon: BarChart3 },
     { id: "ai-tutor", name: "AI Tutor", icon: Lightbulb },
+    { id: "study-planner", name: "AI Study Planner", icon: CalendarCheck },
   ],
   guardian: [
     { id: "overview", name: "Dashboard", icon: LayoutDashboard },

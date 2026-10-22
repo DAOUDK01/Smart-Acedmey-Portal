@@ -314,14 +314,14 @@ export default function StaffRegistrationPage() {
             SmartAcademy
           </Link>
           <div className="rounded-xl border border-accent-purple/20 bg-accent-purple/[0.05] px-4 py-2 text-sm text-slate-600">
-            Staff onboarding portal
+            Teacher onboarding portal
           </div>
         </header>
 
         <section className="grid gap-8 py-10 lg:grid-cols-[360px_1fr]">
           <aside className="space-y-6 lg:sticky lg:top-6 lg:self-start">
             <div className="glass-panel rounded-2xl p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.35em] text-accent-cyan">Staff Registration</p>
+              <p className="text-xs font-bold uppercase tracking-[0.35em] text-accent-cyan">Teacher Registration</p>
               <h1 className="mt-4 text-4xl font-bold leading-tight text-white">Complete your profile</h1>
               <p className="mt-4 text-sm leading-6 text-slate-400">
                 Provide complete identity, contact, education, experience, and verification documents before admin review.

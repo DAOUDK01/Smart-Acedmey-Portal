@@ -14,10 +14,12 @@ import { TutorModule } from "./modules/tutor/tutor.module";
 import { RecommendationsModule } from "./modules/recommendations/recommendations.module";
 import { GuardianModule } from "./modules/guardian/guardian.module";
 import { SystemModule } from "./modules/system/system.module";
+import { StudyPlannerModule } from "./modules/study-planner/study-planner.module";
+import { AssistantModule } from "./modules/assistant/assistant.module";
 import { AppController } from "./app.controller";
 
 @Module({
-  imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]), AuthModule, ContentModule, QuizModule, MockExamModule, UsersModule, StatsModule, ClassesModule, AdmissionModule, TutorModule, RecommendationsModule, GuardianModule, SystemModule],
+  imports: [ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]), AuthModule, ContentModule, QuizModule, MockExamModule, UsersModule, StatsModule, ClassesModule, AdmissionModule, TutorModule, RecommendationsModule, GuardianModule, SystemModule, StudyPlannerModule, AssistantModule],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: AccountThrottlerGuard }],
 })

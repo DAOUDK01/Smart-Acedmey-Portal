@@ -7,6 +7,14 @@ import { QuizStatus } from "@prisma/client";
 import { AuthenticatedUser, studentKeyFor } from "../auth/identity";
 import { serializeQuiz, serializeQuizzes } from "./quiz.serializer";
 import { generateFallbackQuestionsForSegment } from "./quiz.fallback";
+import {
+  ADAPTIVE_ATTEMPT_WINDOW,
+  DEFAULT_ADAPTIVE_DIFFICULTY,
+  balanceCheckpointLevels,
+  levelTargets,
+  difficultyForScores,
+  selectAdaptiveQuizzes,
+} from "./adaptive-difficulty";
 import { isConfiguredApiKey, resolveOllamaUrl, resolveQuizAiApiKey, resolveQuizAiBaseUrl, resolveQuizAiModel, resolveQuizAiProvider } from "./quiz.provider";
 import {
   LectureSegmentInput,
@@ -19,7 +27,6 @@ const MAX_TRANSCRIPT_CHARS = 60_000;
 const MAX_SEGMENTS = 12;
 // Segments are generated in small parallel batches so providers are not hit with a burst of requests.
 const SEGMENT_GENERATION_CONCURRENCY = 3;
-const DIFFICULTY_ORDER: Record<string, number> = { easy: 0, medium: 1, hard: 2 };
 // Questions about the recording rather than the subject ("what does Segment 2 say?") are not useful quizzes.
 const META_REFERENCE_PATTERN = /\bsegment\s*\d*\b|\btranscript\b/i;
 const META_QUESTION_PATTERN =
@@ -47,6 +54,102 @@ export class QuizService {
       orderBy: { createdAt: "desc" },
     });
     return serializeQuizzes(quizzes);
+  }
+
+  /**
+   * Approved quizzes for a student, narrowed per checkpoint to the difficulty that matches the
+   * student's recent performance in the quiz's subject. Non-students get the full approved list.
+   */
+  async listAdaptiveQuizQuestionsForStudent(user?: AuthenticatedUser) {
+    if (user?.role !== "STUDENT") {
+      return this.listQuizQuestionsByStatus(QuizStatus.APPROVED);
+    }
+
+    const quizzes = await this.prisma.quizQuestion.findMany({
+      where: { status: QuizStatus.APPROVED },
+      orderBy: { createdAt: "desc" },
+    });
+    const { recentScores, subjectOf, answeredQuizIds } = await this.loadAdaptiveHistory(user, quizzes);
+
+    const selected = selectAdaptiveQuizzes(
+      quizzes,
+      (quiz) => difficultyForScores(recentScores.get(subjectOf(quiz)) ?? []),
+      answeredQuizIds,
+    );
+    return serializeQuizzes(selected);
+  }
+
+  /**
+   * The student's current adaptive level per course (the same level used to pick their quizzes), so the
+   * UI can show it. Courses without attempts are omitted; they start at the default level.
+   */
+  async getAdaptiveLevelsForStudent(user?: AuthenticatedUser) {
+    if (user?.role !== "STUDENT") {
+      return { defaultLevel: DEFAULT_ADAPTIVE_DIFFICULTY, levels: [] };
+    }
+    const { recentScores } = await this.loadAdaptiveHistory(user, []);
+    return { defaultLevel: DEFAULT_ADAPTIVE_DIFFICULTY, levels: courseLevels(recentScores) };
+  }
+
+  /**
+   * Every student's current adaptive level per course, for the teacher dashboard. It is computed from
+   * the same recent-score window the student's quiz selection uses, so both always agree.
+   */
+  async getAdaptiveLevelsForAllStudents() {
+    const attempts = await this.prisma.quizAttempt.findMany({
+      select: { studentId: true, score: true, quiz: { select: { lectureId: true, sourceTopic: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    const subjectOf = await this.subjectResolver(attempts.map((attempt) => attempt.quiz));
+
+    const attemptsByStudent = new Map<string, typeof attempts>();
+    for (const attempt of attempts) {
+      attemptsByStudent.set(attempt.studentId, [...(attemptsByStudent.get(attempt.studentId) ?? []), attempt]);
+    }
+    const students = [...attemptsByStudent.entries()].map(([studentId, studentAttempts]) => ({
+      studentId,
+      levels: courseLevels(recentScoresBySubject(studentAttempts, subjectOf)),
+    }));
+    return { defaultLevel: DEFAULT_ADAPTIVE_DIFFICULTY, students };
+  }
+
+  /** Recent scores per subject (course, or topic for lecture-less quizzes) for a student. */
+  private async loadAdaptiveHistory(
+    user: AuthenticatedUser,
+    quizzes: { lectureId: string | null }[],
+  ) {
+    const email = await studentKeyFor(this.prisma, user);
+    const attempts = await this.prisma.quizAttempt.findMany({
+      where: { studentId: { in: [email, user.userId ?? email] } },
+      select: { quizId: true, score: true, quiz: { select: { lectureId: true, sourceTopic: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const subjectOf = await this.subjectResolver([...quizzes, ...attempts.map((attempt) => attempt.quiz)]);
+
+    return {
+      recentScores: recentScoresBySubject(attempts, subjectOf),
+      subjectOf,
+      answeredQuizIds: new Set(attempts.map((attempt) => attempt.quizId)),
+    };
+  }
+
+  /** Maps a quiz to its adaptive subject: its lecture's course, or its topic for lecture-less quizzes. */
+  private async subjectResolver(quizzes: { lectureId: string | null }[]) {
+    const lectureIds = [
+      ...new Set(quizzes.map((quiz) => quiz.lectureId).filter((id): id is string => Boolean(id))),
+    ];
+    const lectures = lectureIds.length
+      ? await this.prisma.lecture.findMany({
+          where: { id: { in: lectureIds } },
+          select: { id: true, courseId: true },
+        })
+      : [];
+    const courseByLecture = new Map(lectures.map((lecture) => [lecture.id, lecture.courseId]));
+    return (quiz: AdaptiveSubjectQuiz) => {
+      const courseId = quiz.lectureId ? courseByLecture.get(quiz.lectureId) : undefined;
+      return courseId ? `course:${courseId}` : `topic:${quiz.sourceTopic ?? ""}`;
+    };
   }
 
   async listApprovedMockExams() {
@@ -194,8 +297,9 @@ export class QuizService {
     segment: LectureSegmentInput,
     questionCount: number,
   ) {
+    const targets = levelTargets(questionCount);
     // The segment label is deliberately left out so the model writes about the subject, not "Segment 2".
-    const userPrompt = `Course/lecture topic: ${topic}\n\nLecture content the student has just watched:\n"""\n${segment.text || topic}\n"""\n\nWrite exactly ${questionCount} exam-style multiple-choice questions that test understanding of the concepts taught in the content above. Use only facts from this content, and phrase every question as a standalone question about the subject.`;
+    const userPrompt = `Course/lecture topic: ${topic}\n\nLecture content the student has just watched:\n"""\n${segment.text || topic}\n"""\n\nWrite exactly ${questionCount} exam-style multiple-choice questions that test understanding of the concepts taught in the content above: exactly ${targets.easy} easy, ${targets.medium} medium and ${targets.hard} hard. Use only facts from this content, and phrase every question as a standalone question about the subject.`;
 
     if (isConfiguredApiKey(process.env.QUIZ_API_KEY)) {
       try {
@@ -275,20 +379,17 @@ export class QuizService {
             const generated = useProviders
               ? await this.resolveSegmentQuizData(topicName, segment, count)
               : null;
-            const questions: any[] = generated?.questions ?? [];
-            if (questions.length < count) {
-              questions.push(
-                ...generateFallbackQuestionsForSegment(topicName, segment, resolvedSegments, count - questions.length),
-              );
-            }
+            // Adaptive learning shows each student only their level's quiz at a checkpoint, so every
+            // checkpoint needs its own easy, medium and hard questions.
+            const questions: any[] = balanceCheckpointLevels(
+              generated?.questions ?? [],
+              generateFallbackQuestionsForSegment(topicName, segment, resolvedSegments, count),
+              count,
+            );
             return {
               segment,
               provider: generated?.provider ?? "local-fallback",
-              questions: [...questions].sort(
-                (a, b) =>
-                  (DIFFICULTY_ORDER[a.difficulty ?? ""] ?? 1) -
-                  (DIFFICULTY_ORDER[b.difficulty ?? ""] ?? 1),
-              ),
+              questions,
             };
           }),
         )),
@@ -466,6 +567,27 @@ export class QuizService {
     return attempts.map((attempt) => attempt.quizId);
   }
 
+  /** The authenticated student's own checkpoint answers over time (for their progress charts). */
+  async listMyAttemptHistory(user?: AuthenticatedUser) {
+    const email = await studentKeyFor(this.prisma, user);
+    const attempts = await this.prisma.quizAttempt.findMany({
+      where: { studentId: { in: [email, user?.userId ?? email] } },
+      select: { score: true, passed: true, submittedAt: true, quiz: { select: { lectureId: true } } },
+      orderBy: { submittedAt: "asc" },
+    });
+    const lectureIds = [...new Set(attempts.map((a) => a.quiz.lectureId).filter((id): id is string => Boolean(id)))];
+    const lectures = lectureIds.length
+      ? await this.prisma.lecture.findMany({ where: { id: { in: lectureIds } }, select: { id: true, courseId: true } })
+      : [];
+    const courseOf = new Map(lectures.map((lecture) => [lecture.id, lecture.courseId]));
+    return attempts.map((attempt) => ({
+      submittedAt: attempt.submittedAt,
+      score: attempt.score,
+      passed: attempt.passed,
+      courseId: attempt.quiz.lectureId ? (courseOf.get(attempt.quiz.lectureId) ?? null) : null,
+    }));
+  }
+
   async getApprovedQuizForAttempt(id: string) {
     const quiz = await this.prisma.quizQuestion.findUnique({ where: { id } });
     if (!quiz || quiz.status !== QuizStatus.APPROVED) {
@@ -529,6 +651,36 @@ export class QuizService {
 
     return attempt;
   }
+}
+
+type AdaptiveSubjectQuiz = { lectureId: string | null; sourceTopic: string | null };
+
+/** The most recent scores (newest first, capped at the adaptive window) per subject. */
+function recentScoresBySubject(
+  attempts: { score: number; quiz: AdaptiveSubjectQuiz }[],
+  subjectOf: (quiz: AdaptiveSubjectQuiz) => string,
+) {
+  const recentScores = new Map<string, number[]>();
+  for (const attempt of attempts) {
+    const subject = subjectOf(attempt.quiz);
+    const scores = recentScores.get(subject) ?? [];
+    if (scores.length < ADAPTIVE_ATTEMPT_WINDOW) {
+      recentScores.set(subject, [...scores, attempt.score]);
+    }
+  }
+  return recentScores;
+}
+
+/** Per-course levels; topic-only subjects (lecture-less quizzes) are left out. */
+function courseLevels(recentScores: Map<string, number[]>) {
+  return [...recentScores.entries()]
+    .filter(([subject]) => subject.startsWith("course:"))
+    .map(([subject, scores]) => ({
+      courseId: subject.slice("course:".length),
+      level: difficultyForScores(scores),
+      averageScore: Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length),
+      attempts: scores.length,
+    }));
 }
 
 function normalizeQuizStatus<T extends { status?: string | QuizStatus }>(

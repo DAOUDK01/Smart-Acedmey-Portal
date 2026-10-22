@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Check, FileQuestion, Maximize, Minimize, Pause, Play, RotateCcw, Settings2, X } from "lucide-react";
+import { Check, FileQuestion, Maximize, Minimize, Pause, Play, RotateCcw, Settings2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { GazeMonitor } from "@/components/student/gaze-monitor";
 import { formatClock } from "@/lib/transcript-segments";
+import { LEVEL_BADGE_CLASS, LEVEL_FEEDBACK, formatLevel, type AdaptiveLevel } from "@/lib/adaptive-level";
 
 export type LectureQuiz = {
   id: string;
@@ -30,6 +31,8 @@ type LecturePlayerProps = {
   processingError?: string | null;
   quizzes: LectureQuiz[];
   answeredQuizIds: Set<string>;
+  /** The student's current Adaptive Learning level for this lecture's course, when known. */
+  adaptiveLevel?: AdaptiveLevel | null;
   onQuizAnswered: (quizId: string) => void;
   onSubmitAnswer: (
     quiz: LectureQuiz,
@@ -120,6 +123,7 @@ export function LecturePlayer({
   processingError,
   quizzes,
   answeredQuizIds,
+  adaptiveLevel = null,
   onQuizAnswered,
   onSubmitAnswer,
   isActive = true,
@@ -145,9 +149,12 @@ export function LecturePlayer({
   const currentQuizRef = useRef<LectureQuiz | null>(null);
   const sessionActiveRef = useRef(false);
   // True while the gaze monitor reports the student looking away or off camera; playback is blocked.
-  const gazeAwayRef = useRef(false);
+  // It starts blocked while monitoring is on, so the lecture only starts once a face is detected.
+  const gazeAwayRef = useRef(isActive);
   // Only auto-resume when it was the gaze monitor that paused a playing video.
   const pausedByGazeRef = useRef(false);
+  // A newly opened lecture starts by itself the first time the student's face and eyes are detected.
+  const pendingAutoStartRef = useRef(true);
   const onWatchProgressRef = useRef(onWatchProgress);
   onWatchProgressRef.current = onWatchProgress;
 
@@ -254,7 +261,7 @@ export function LecturePlayer({
 
   const handleGazeFocused = useCallback(() => {
     gazeAwayRef.current = false;
-    if (pausedByGazeRef.current) {
+    if (pausedByGazeRef.current || pendingAutoStartRef.current) {
       pausedByGazeRef.current = false;
       resumePlayback();
     }
@@ -264,7 +271,14 @@ export function LecturePlayer({
   const handleGazeUnavailable = useCallback(() => {
     gazeAwayRef.current = false;
     pausedByGazeRef.current = false;
-  }, []);
+    if (pendingAutoStartRef.current) {
+      resumePlayback();
+    }
+  }, [resumePlayback]);
+
+  useEffect(() => {
+    if (isPlaying) pendingAutoStartRef.current = false;
+  }, [isPlaying]);
 
   const getCurrentTime = useCallback(() => {
     if (isYouTube && playerRef.current?.getCurrentTime) {
@@ -394,6 +408,7 @@ export function LecturePlayer({
 
   useEffect(() => {
     maxWatchedRef.current = 0;
+    pendingAutoStartRef.current = true;
     lastTickWallRef.current = null;
     lastCheckTimeRef.current = -1;
     sessionActiveRef.current = false;
@@ -422,6 +437,14 @@ export function LecturePlayer({
       pausePlayback();
     }
   }, [isActive, pausePlayback]);
+
+  // The gaze monitor restarts whenever the player becomes active, and playback stays blocked until
+  // it detects a face again. This must only follow `isActive`: re-running it for any other reason
+  // (e.g. switching between a YouTube and an uploaded lecture) would block playback while the
+  // monitor, already focused or unavailable, never reports again.
+  useEffect(() => {
+    gazeAwayRef.current = isActive;
+  }, [isActive]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -465,7 +488,8 @@ export function LecturePlayer({
             playerRef.current = event.target;
             setPlayerReady(true);
             setDuration(event.target.getDuration() || 0);
-            event.target.playVideo();
+            // Otherwise the gaze monitor starts it once the student's face is detected.
+            if (!gazeAwayRef.current) event.target.playVideo();
           },
           onError: () => {
             if (destroyed) return;
@@ -776,6 +800,17 @@ export function LecturePlayer({
       {currentQuiz ? (
         <div role="dialog" aria-modal="true" aria-label="Lecture quiz" className="absolute inset-0 z-50 flex overflow-y-auto bg-slate-900/85 p-4">
           <div className="m-auto w-full max-w-2xl rounded-3xl border border-accent-purple/15 bg-ink-900 p-6 shadow-2xl">
+            {adaptiveLevel && !quizResult ? (
+              <div className="mb-4 rounded-2xl border border-accent-cyan/20 bg-accent-cyan/[0.06] px-4 py-3">
+                <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-accent-cyan">
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  Recommended for You
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Based on your recent performance, this quiz is suitable for your current level.
+                </p>
+              </div>
+            ) : null}
             <div className="mb-6 flex items-center gap-2">
               <span
                 className={cn(
@@ -870,6 +905,22 @@ export function LecturePlayer({
                   </div>
                 </div>
                 <p className="mb-6 text-slate-600">{quizResult.explanation}</p>
+                {adaptiveLevel && sessionIndex === sessionQuizzes.length - 1 ? (
+                  <div className="mb-6 rounded-2xl border border-accent-purple/15 bg-accent-purple/[0.06] p-4">
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white">
+                      Your current level:
+                      <span
+                        className={cn(
+                          "rounded-full px-3 py-1 text-xs font-bold uppercase tracking-widest",
+                          LEVEL_BADGE_CLASS[adaptiveLevel],
+                        )}
+                      >
+                        {formatLevel(adaptiveLevel)}
+                      </span>
+                    </p>
+                    <p className="mt-2 text-sm text-slate-600">{LEVEL_FEEDBACK[adaptiveLevel]}</p>
+                  </div>
+                ) : null}
                 <Button
                   onClick={
                     sessionIndex < sessionQuizzes.length - 1
